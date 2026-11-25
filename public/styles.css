@@ -294,3 +294,32 @@ details ul, details ol { margin: 4px 0 8px; padding-left: 22px; }
 .rules .panel h2 { font-size: 1.2rem; }
 .rules .panel ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
 .rules .panel { margin-top: 14px; }
+
+/* Editor */
+.editor { padding: 0 0 48px; }
+.editor-bar { position: sticky; top: 64px; z-index: 9; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 0; margin-bottom: 14px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.editor-bar .icon-btn { text-decoration: none; font-size: 1.1rem; }
+.bar-status { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.saved-text { font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.vis-select { width: auto; padding: 6px 10px; font-size: .88rem; border-radius: 10px; }
+.status-pill.new, .status-pill.draft { background: var(--surface-2); color: var(--muted); }
+.status-pill.published { background: var(--accent-soft); color: var(--gold); }
+.editor-grid { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+@media (min-width: 900px) { .editor-grid { grid-template-columns: minmax(0, 1fr) 300px; } .editor-side { position: sticky; top: 132px; } }
+.editor-side { display: flex; flex-direction: column; gap: 14px; }
+.editor-side .panel { margin: 0; padding: 14px 16px; }
+.editor-side .panel + .panel { margin-top: 0; }
+.editor-side h3 { font-size: 1rem; margin-bottom: 8px; }
+.editor-side .photo-preview { width: 100%; }
+.editor-title { font: 700 1.6rem Geist, sans-serif; letter-spacing: -0.02em; border: 0 !important; border-bottom: 2px solid var(--line) !important; border-radius: 0 !important; padding: 6px 2px 10px !important; background: transparent !important; }
+.editor-title:focus { outline: none; border-bottom-color: var(--accent) !important; }
+textarea.lines { min-height: 180px; line-height: 1.7; }
+.editor-team { margin: 0 0 10px; font-size: .92rem; }
+.share-dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 20px; width: min(520px, calc(100% - 32px)); box-shadow: var(--shadow); }
+.share-dialog::backdrop { background: rgba(0,0,0,.45); }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dialog-head h2 { margin: 0; }
+@media (max-width: 560px) { .editor-bar { top: 64px; } .bar-actions { width: 100%; } .bar-actions .btn.primary { margin-left: auto; } }
+
+.prompt-box { min-height: 160px; font: .85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); }

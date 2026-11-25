@@ -402,3 +402,53 @@ test('making recipes together with invites and notifications', async () => {
   await mom('PATCH', '/api/inbox', { all: true });
   assert.equal((await mom('GET', '/api/inbox?count=1')).data.unread, 0);
 });
+
+test('drafts: save half-finished, come back, publish later', async () => {
+  const gran = client((await signIn('grandma')).cookie);
+  const d = await gran('POST', '/api/recipes', { draft: true, title: '', ingredients: '2 cups flour' });
+  assert.equal(d.status, 201);
+  assert.equal(d.data.recipe.status, 'draft');
+  assert.equal(d.data.recipe.title, 'Untitled recipe');
+  const id = d.data.recipe.id;
+  // Nobody else can see it, and it isn't in lists.
+  assert.equal((await client(null)('GET', `/api/recipes/${id}`)).status, 404);
+  assert.ok(!(await client(null)('GET', '/api/recipes?limit=48')).data.recipes.some((r) => r.id === id));
+  assert.ok((await gran('GET', '/api/users/grandma')).data.recipes.some((r) => r.id === id && r.status === 'draft'));
+  // Come back and keep going (even with things moderation would block: drafts are only checked on publish).
+  const again = await gran('PUT', `/api/recipes/${id}`, { draft: true, title: 'Cinnamon Rolls', ingredients: '2 cups flour\n1 tbsp cinnamon', steps: 'Roll out the dough', baseUpdatedAt: d.data.recipe.updatedAt });
+  assert.equal(again.data.recipe.status, 'draft');
+  assert.equal(again.data.recipe.title, 'Cinnamon Rolls');
+  // A stale save is refused instead of overwriting newer work.
+  const stale = await gran('PUT', `/api/recipes/${id}`, { draft: true, title: 'Old', ingredients: 'x', baseUpdatedAt: d.data.recipe.updatedAt - 1 });
+  assert.equal(stale.status, 409);
+  assert.equal(stale.data.conflict, true);
+  // Co-authors can work on the draft but only the owner publishes.
+  await gran('POST', `/api/recipes/${id}/collaborators`, { username: 'dadcooks' });
+  await dad('POST', `/api/recipes/${id}/invite`, { action: 'accept' });
+  const dadSave = await dad('PUT', `/api/recipes/${id}`, { title: 'Cinnamon Rolls', ingredients: '2 cups flour\n1 tbsp cinnamon\n1/2 cup sugar', steps: 'Roll out the dough, sprinkle with cinnamon sugar, roll up and slice.\nBake at 350°F for 25 minutes until golden.' });
+  assert.equal(dadSave.data.recipe.status, 'draft'); // co-author's save stays a draft
+  const published = await gran('PUT', `/api/recipes/${id}`, { title: 'Cinnamon Rolls', ingredients: '2 cups flour\n1 tbsp cinnamon\n1/2 cup sugar', steps: 'Roll out the dough, sprinkle with cinnamon sugar, roll up and slice.\nBake at 350°F for 25 minutes until golden.' });
+  assert.equal(published.data.recipe.status, 'published');
+  assert.equal((await gran('PUT', `/api/recipes/${id}`, { draft: true, title: 'x' })).status, 400); // published recipes don't go back to drafts
+  // A blocked publish leaves the draft as it was.
+  const d2 = (await gran('POST', '/api/recipes', { draft: true, title: 'Bleach Drink', ingredients: '1 cup bleach' })).data.recipe;
+  assert.equal((await gran('PUT', `/api/recipes/${d2.id}`, { title: 'Bleach Drink', ingredients: '1 cup bleach', steps: 'Mix it in a cup with water and stir it well.' })).status, 422);
+  assert.equal((await gran('GET', `/api/recipes/${d2.id}`)).data.recipe.status, 'draft');
+});
+
+test('use your own AI: copy a prompt, paste the answer back', async () => {
+  const p = await mom('POST', '/api/ai/prompt', { prompt: 'banana muffins for a toddler', category: 'Baby & Toddler' });
+  assert.match(p.data.text, /banana muffins for a toddler/);
+  assert.match(p.data.text, /no honey under 12 months/);
+  assert.equal((await mom('POST', '/api/ai/prompt', { prompt: 'cookies with bleach' })).status, 422);
+  const json = await mom('POST', '/api/ai/import', { text: 'Here you go!\n```json\n{"title":"Banana Oat Muffins","description":"Soft and sweet.","category":"baby & toddler","prepTime":30,"servings":12,"ingredients":["3 ripe bananas","2 cups oats"],"steps":["Mash the bananas and mix with the oats.","Bake at 350°F for 20 minutes."]}\n```' });
+  assert.equal(json.status, 200);
+  assert.equal(json.data.draft.category, 'Baby & Toddler');
+  assert.equal(json.data.draft.ingredients.length, 2);
+  const plain = await mom('POST', '/api/ai/import', { category: 'Snacks', text: 'Sure!\n\n# Apple Nachos\nA crunchy snack.\nServes 2\n\nIngredients:\n- 2 apples\n- 2 tbsp sunflower seed butter\n\nInstructions:\n1. Slice the apples thinly.\n2. Drizzle with the seed butter and serve.' });
+  assert.equal(plain.data.draft.title, 'Apple Nachos');
+  assert.equal(plain.data.draft.category, 'Snacks');
+  assert.deepEqual(plain.data.draft.steps, ['Slice the apples thinly.', 'Drizzle with the seed butter and serve.']);
+  assert.equal((await mom('POST', '/api/ai/import', { text: 'hello there, how are you today my friend?' })).status, 400);
+  assert.equal((await mom('POST', '/api/ai/import', { text: '{"title":"Bad","ingredients":["1 cup bleach"],"steps":["Mix the bleach into a cup of water."]}' })).status, 422);
+});

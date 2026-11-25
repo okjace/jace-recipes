@@ -115,7 +115,7 @@ function renderNav() {
   nav.replaceChildren(themeButton());
   if (state.me) {
     nav.append(
-      state.ai ? h('a', { class: 'link hide-sm', href: '#/ai' }, '✨ AI') : null,
+      h('a', { class: 'link hide-sm', href: '#/ai' }, '✨ AI'),
       h('a', { class: 'icon-btn bell', href: '#/inbox', title: 'Notifications', 'aria-label': state.unread ? `Notifications, ${state.unread} new` : 'Notifications' },
         h('span', { 'aria-hidden': 'true' }, '🔔'), state.unread ? h('span', { class: 'badge' }, state.unread > 99 ? '99+' : String(state.unread)) : null),
       h('a', { class: 'btn primary small', href: '#/new' }, '+ Add recipe'),
@@ -129,7 +129,7 @@ function renderNav() {
 
 // ------------------------------------------------------------ cards
 function recipeCard(r) {
-  return h('a', { class: `card${r.verified ? ' is-verified' : ''}`, href: `#/r/${r.id}` },
+  return h('a', { class: `card${r.verified ? ' is-verified' : ''}`, href: r.status === 'draft' && r.canEdit ? `#/edit/${r.id}` : `#/r/${r.id}` },
     h('div', { class: 'card-img' }, r.image ? h('img', { src: r.image, alt: '', loading: 'lazy' }) : EMOJI[r.category] || '🍽️'),
     h('div', { class: 'card-body' },
       h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center' },
@@ -138,7 +138,7 @@ function recipeCard(r) {
         r.aiAssisted ? h('span', { class: 'tag ai-tag', title: 'Made with AI help' }, '✨ AI') : null,
         r.visibility === 'private' ? h('span', { class: 'tag', title: 'Only you can see this' }, '🔒 Private') : r.visibility === 'unlisted' ? h('span', { class: 'tag', title: 'Anyone with the link can see this' }, '🔗 Unlisted') : null,
         myAllergyHits(r).length ? h('span', { class: 'tag allergy-tag', title: 'Contains something on your allergy list' }, `⚠️ ${myAllergyHits(r).map(allergyName).join(', ')}`) : null,
-        r.status !== 'published' ? h('span', { class: `status-pill ${r.status}` }, r.status === 'pending' ? 'In review' : 'Taken down') : null),
+        r.status !== 'published' ? h('span', { class: `status-pill ${r.status}` }, { pending: 'In review', draft: 'Draft', removed: 'Taken down' }[r.status] || r.status) : null),
       h('h3', { class: 'card-title' }, r.title),
       r.description ? h('div', { class: 'muted', style: 'font-size:.92rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden' }, r.description) : null,
       h('div', { class: 'card-meta' }, avatar(r.author), h('span', {}, r.author.displayName), userCheck(r.author),
@@ -178,7 +178,7 @@ async function pageHome() {
       h('div', { class: 'chips' },
         h('a', { class: 'chip verified-chip', href: browseHref({ verified: 'only' }) }, '✓ Jace Verified'),
         state.categories.map((c) => h('a', { class: 'chip', href: browseHref({ category: c }) }, `${EMOJI[c] || ''} ${c}`))),
-      state.me && state.ai ? h('a', { class: 'ai-cta', href: '#/ai' }, h('span', { class: 'ai-spark', 'aria-hidden': 'true' }, '✨'), h('span', {}, h('strong', {}, 'Make a recipe with AI'), h('span', { class: 'muted' }, ' Tell it what you have and who’s eating.'))) : null),
+      state.me ? h('a', { class: 'ai-cta', href: '#/ai' }, h('span', { class: 'ai-spark', 'aria-hidden': 'true' }, '✨'), h('span', {}, h('strong', {}, 'Make a recipe with AI'), h('span', { class: 'muted' }, ' Tell it what you have and who’s eating.'))) : null),
     h('div', { id: 'results' }, h('div', { class: 'empty' }, 'Loading recipes…')));
 
   const [verified, community] = await Promise.all([
@@ -258,61 +258,122 @@ async function pageBrowse(params) {
   await load();
 }
 
-// Make a recipe with AI. The AI writes a draft; the parent checks and edits it before publishing.
-async function pageAI() {
+// Make a recipe with AI. Two ways:
+//   ✨ Jace AI: the built-in free AI writes a draft.
+//   📋 Your own AI: copy a ready-made prompt into ChatGPT, Claude, Gemini, Copilot… and paste the answer back.
+// Either way the parent checks and edits the draft before publishing, and auto moderation checks it.
+const OWN_AIS = [['ChatGPT', 'https://chatgpt.com/'], ['Claude', 'https://claude.ai/new'], ['Gemini', 'https://gemini.google.com/app'], ['Copilot', 'https://copilot.microsoft.com/']];
+
+function draftPreview(draft, { label, onRetry, left }) {
+  return h('div', { class: 'panel ai-result' },
+    h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, h('span', { class: 'tag ai-tag' }, label), h('span', { class: 'tag' }, draft.category), draft.prepTime ? h('span', { class: 'tag' }, `⏱ ${draft.prepTime} min`) : null, h('span', { class: 'tag' }, `🍽 Serves ${draft.servings}`)),
+    h('h2', {}, draft.title),
+    draft.description ? h('p', {}, draft.description) : null,
+    draft.safetyNotes.length ? h('div', { class: 'safety' }, h('h3', {}, '🛡️ Safety notes'), h('ul', {}, draft.safetyNotes.map((n) => h('li', {}, n)))) : null,
+    draft.needsReview.length ? h('div', { class: 'notice warn' }, 'If you publish this, @okjace will check it first: ', draft.needsReview.join(' ')) : null,
+    h('h3', {}, 'Ingredients'), h('ul', {}, draft.ingredients.map((i) => h('li', {}, i))),
+    h('h3', {}, 'Steps'), h('ol', {}, draft.steps.map((s) => h('li', {}, s))),
+    h('p', { class: 'hint' }, 'AI can make mistakes. Read it over and change anything before you share it.'),
+    h('div', { class: 'actions' },
+      h('a', { class: 'btn primary', href: '#/new?from=ai' }, 'Open in the editor'),
+      onRetry ? h('button', { class: 'btn', type: 'button', onclick: onRetry }, 'Try again') : null),
+    left != null ? h('p', { class: 'hint' }, `${left} Jace AI recipe${left === 1 ? '' : 's'} left today.`) : null);
+}
+
+async function pageAI(params = new URLSearchParams()) {
   if (!state.me) return go('#/signin');
+  const mode = params.get('mode') === 'own' || !state.ai ? 'own' : 'jace';
   const prompt = h('textarea', { maxlength: 500, required: true, style: 'min-height:110px', placeholder: 'A quick dinner with chicken, rice and broccoli that my picky 5-year-old will eat' });
   const category = h('select', {}, h('option', { value: '' }, 'Let the AI pick'), state.categories.map((c) => h('option', { value: c }, c)));
   const out = h('div');
-  const go_ = h('button', { class: 'btn primary', type: 'submit' }, '✨ Make recipe');
   const ideas = ['Lunchbox ideas with no nuts', 'Soft finger food for a 1-year-old', 'Healthy after-school snack in 10 minutes', 'Dinner with what’s left: eggs, cheese, spinach, tortillas'];
+  const loading = (text) => h('div', { class: 'panel ai-loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), text);
+  const askFields = [
+    h('label', {}, 'What should we make?'), prompt,
+    h('div', { class: 'chips', style: 'margin-top:10px' }, ideas.map((t) => h('button', { class: 'chip', type: 'button', onclick: () => { prompt.value = t; prompt.focus(); } }, t))),
+    h('label', {}, 'Category'), category,
+  ];
 
-  const submit = async (e) => {
-    e.preventDefault();
-    out.replaceChildren(h('div', { class: 'panel ai-loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Cooking up your recipe… this can take up to a minute.'));
-    go_.disabled = true;
-    try {
-      const ask = () => api('POST', '/api/ai/recipe', { prompt: prompt.value, category: category.value });
-      let result;
-      try { result = await ask(); } catch (err) {
-        if (err.status !== 503 || /isn’t set up/.test(err.message)) throw err;
-        // Free AI models are sometimes busy: wait a moment and try once more before giving up.
-        out.replaceChildren(h('div', { class: 'panel ai-loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'The AI is busy, trying another one…'));
-        await new Promise((r) => setTimeout(r, 4000));
-        result = await ask();
-      }
-      const { draft, left } = result;
-      state.aiDraft = draft;
-      out.replaceChildren(h('div', { class: 'panel ai-result' },
-        h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, h('span', { class: 'tag ai-tag' }, '✨ AI draft'), h('span', { class: 'tag' }, draft.category), draft.prepTime ? h('span', { class: 'tag' }, `⏱ ${draft.prepTime} min`) : null, h('span', { class: 'tag' }, `🍽 Serves ${draft.servings}`)),
-        h('h2', {}, draft.title),
-        draft.description ? h('p', {}, draft.description) : null,
-        draft.safetyNotes.length ? h('div', { class: 'safety' }, h('h3', {}, '🛡️ Safety notes'), h('ul', {}, draft.safetyNotes.map((n) => h('li', {}, n)))) : null,
-        draft.needsReview.length ? h('div', { class: 'notice warn' }, 'If you publish this, @okjace will check it first: ', draft.needsReview.join(' ')) : null,
-        h('h3', {}, 'Ingredients'), h('ul', {}, draft.ingredients.map((i) => h('li', {}, i))),
-        h('h3', {}, 'Steps'), h('ol', {}, draft.steps.map((s) => h('li', {}, s))),
-        h('p', { class: 'hint' }, 'AI can make mistakes. Read it over and change anything before you share it.'),
-        h('div', { class: 'actions' },
-          h('a', { class: 'btn primary', href: '#/new?from=ai' }, 'Edit & publish'),
-          h('button', { class: 'btn', type: 'button', onclick: submit }, 'Try again')),
-        h('p', { class: 'hint' }, `${left} AI recipe${left === 1 ? '' : 's'} left today.`)));
-    } catch (err) {
-      out.replaceChildren(errorBox(err));
-    } finally { go_.disabled = false; }
-  };
+  let form;
+  if (mode === 'jace') {
+    const goBtn = h('button', { class: 'btn primary', type: 'submit' }, '✨ Make recipe');
+    const submit = async (e) => {
+      e.preventDefault();
+      out.replaceChildren(loading('Cooking up your recipe… this can take up to a minute.'));
+      goBtn.disabled = true;
+      try {
+        const ask = () => api('POST', '/api/ai/recipe', { prompt: prompt.value, category: category.value });
+        let result;
+        try { result = await ask(); } catch (err) {
+          if (err.status !== 503 || /isn’t set up/.test(err.message)) throw err;
+          out.replaceChildren(loading('The AI is busy, trying another one…'));
+          await new Promise((r) => setTimeout(r, 4000));
+          result = await ask();
+        }
+        state.aiDraft = result.draft;
+        out.replaceChildren(draftPreview(result.draft, { label: '✨ Jace AI draft', onRetry: submit, left: result.left }));
+      } catch (err) {
+        out.replaceChildren(errorBox(err),
+          err.status === 503 ? h('p', {}, 'Busy? ', h('a', { href: '#/ai?mode=own' }, 'Use your own AI instead'), ' (ChatGPT, Claude, Gemini…).') : null);
+      } finally { goBtn.disabled = false; }
+    };
+    form = h('form', { class: 'panel', onsubmit: submit }, ...askFields,
+      h('div', { class: 'actions', style: 'margin-top:18px' }, goBtn),
+      h('p', { class: 'hint' }, 'Your request is sent to a free AI model on OpenRouter. Don’t include private information. Every AI recipe goes through Jace Recipes auto moderation.'));
+  } else {
+    // Step 1: get the prompt. Step 2: paste the answer.
+    const promptBox = h('textarea', { readonly: true, class: 'prompt-box', 'aria-label': 'Prompt to copy' });
+    const step2 = h('div', { class: 'hidden' });
+    const answer = h('textarea', { style: 'min-height:180px', placeholder: 'Paste everything your AI answered here…' });
+    const importBtn = h('button', { class: 'btn primary', type: 'button' }, 'Use this recipe');
+    const copy = async () => {
+      try { await navigator.clipboard.writeText(promptBox.value); toast('Prompt copied! Paste it into your AI.'); }
+      catch { promptBox.select(); toast('Select all and copy the prompt'); }
+    };
+    const getPrompt = async (e) => {
+      e.preventDefault();
+      out.replaceChildren();
+      try {
+        const { text } = await api('POST', '/api/ai/prompt', { prompt: prompt.value, category: category.value });
+        promptBox.value = text;
+        step2.classList.remove('hidden');
+        copy();
+      } catch (err) { out.replaceChildren(errorBox(err)); }
+    };
+    importBtn.onclick = async () => {
+      out.replaceChildren(loading('Reading your recipe and checking it…'));
+      importBtn.disabled = true;
+      try {
+        const { draft } = await api('POST', '/api/ai/import', { text: answer.value, category: category.value });
+        state.aiDraft = draft;
+        out.replaceChildren(draftPreview(draft, { label: '📋 From your AI' }));
+        out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (err) { out.replaceChildren(errorBox(err)); } finally { importBtn.disabled = false; }
+    };
+    step2.append(
+      h('h3', { style: 'margin-top:18px' }, '2. Copy this prompt into your AI'),
+      promptBox,
+      h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onclick: copy }, '📋 Copy prompt'),
+        OWN_AIS.map(([name, url]) => h('a', { class: 'btn small', href: url, target: '_blank', rel: 'noopener' }, `Open ${name} ↗`))),
+      h('h3', { style: 'margin-top:18px' }, '3. Paste your AI’s answer'),
+      answer,
+      h('div', { class: 'actions' }, importBtn),
+      h('p', { class: 'hint' }, 'Jace Recipes reads the answer, checks it with auto moderation, and opens it as a draft for you to edit. Works with ChatGPT, Claude, Gemini, Copilot or any other AI.'));
+    form = h('form', { class: 'panel', onsubmit: getPrompt },
+      h('h3', { style: 'margin-top:0' }, '1. Say what you want'), ...askFields,
+      h('div', { class: 'actions', style: 'margin-top:18px' }, h('button', { class: 'btn primary', type: 'submit' }, 'Get my prompt')),
+      step2);
+  }
 
   app.replaceChildren(h('div', { class: 'form-page' },
     h('a', { class: 'back', href: '#/' }, '← Home'),
     h('h1', {}, '✨ Make a recipe with AI'),
     h('p', { class: 'muted' }, 'Say what you’d like to cook, what you have, and who’s eating. You’ll get a draft you can edit before you share it.'),
-    state.me.muted ? h('div', { class: 'notice warn' }, 'Your Jace account is muted, so you can’t use the AI right now.') : null,
-    h('form', { class: 'panel', onsubmit: submit },
-      h('label', {}, 'What should we make?'), prompt,
-      h('div', { class: 'chips', style: 'margin-top:10px' }, ideas.map((t) => h('button', { class: 'chip', type: 'button', onclick: () => { prompt.value = t; prompt.focus(); } }, t))),
-      h('label', {}, 'Category'), category,
-      h('div', { class: 'actions', style: 'margin-top:18px' }, go_),
-      h('p', { class: 'hint' }, 'Your request is sent to a free AI model on OpenRouter. Don’t include private information. Every AI recipe goes through Jace Recipes auto moderation.')),
-    out));
+    h('div', { class: 'tabs', role: 'tablist' },
+      state.ai ? h('a', { class: `chip${mode === 'jace' ? ' on' : ''}`, href: '#/ai', role: 'tab', 'aria-selected': String(mode === 'jace') }, '✨ Jace AI') : null,
+      h('a', { class: `chip${mode === 'own' ? ' on' : ''}`, href: '#/ai?mode=own', role: 'tab', 'aria-selected': String(mode === 'own') }, '📋 Use your own AI (ChatGPT, Claude, Gemini…)')),
+    state.me.muted ? h('div', { class: 'notice warn' }, 'Your Jace account is muted, so you can’t post recipes right now.') : null,
+    form, out));
 }
 
 async function pageRecipe(id) {
@@ -321,6 +382,8 @@ async function pageRecipe(id) {
   const team = (r.collaborators || []).filter((c) => c.status === 'accepted');
   const notices = [];
   if (r.status === 'pending') notices.push(h('div', { class: 'notice warn' }, h('strong', {}, 'Waiting for review. '), 'Auto-moderation sent this recipe to @okjace before it goes public.', r.modReasons && r.modReasons.length ? h('ul', {}, r.modReasons.map((x) => h('li', {}, x))) : null));
+  if (r.status === 'draft') notices.push(h('div', { class: 'notice warn' }, h('strong', {}, '📝 This is a draft. '), 'Only you and the people you share it with can see it.',
+    r.canEdit ? h('div', { class: 'actions', style: 'margin:8px 0 0' }, h('a', { class: 'btn primary small', href: `#/edit/${r.id}` }, 'Keep editing')) : null));
   if (r.status === 'removed') notices.push(h('div', { class: 'notice error' }, h('strong', {}, 'Taken down by @okjace. '), r.takedownReason || ''));
   if (r.status === 'published' && r.modReasons && r.modReasons.length) {
     notices.push(h('div', { class: 'notice warn' }, h('strong', {}, '🛡️ Auto moderation flagged this. '),
@@ -364,7 +427,7 @@ async function pageRecipe(id) {
       adminBar,
       r.canEdit ? h('div', { class: 'actions' },
         r.status !== 'removed' || isAdmin() ? h('a', { class: 'btn small', href: `#/edit/${r.id}` }, 'Edit') : null,
-        r.isOwner ? h('button', { class: 'btn small', onclick: () => document.getElementById('share')?.classList.toggle('hidden') }, '👥 Share') : null,
+        r.isOwner ? h('button', { class: 'btn small', onclick: () => openShareDialog(r.id, () => {}).then(() => {}) }, '👥 Share') : null,
         !r.isOwner ? h('button', { class: 'btn small', onclick: async () => {
           if (!confirm('Stop making this recipe together? You won’t be able to edit it anymore.')) return;
           await api('DELETE', `/api/recipes/${r.id}/collaborators/${encodeURIComponent(state.me.username)}`); toast('You left the recipe'); route();
@@ -373,7 +436,6 @@ async function pageRecipe(id) {
           if (!confirm(`Delete “${r.title}” forever? This can’t be undone.`)) return;
           try { await api('DELETE', `/api/recipes/${r.id}`); toast('Recipe deleted'); go(`#/u/${state.me.username}`); } catch (err) { toast(err.message); }
         } }, 'Delete')) : null,
-      r.isOwner ? sharePanel(r) : null,
       h('div', { class: 'panel' }, h('h2', {}, 'Ingredients'), h('ul', { class: 'ingredients' }, r.ingredients.map((i) => h('li', {}, h('input', { type: 'checkbox', 'aria-label': `Got ${i}` }), h('span', {}, i))))),
       h('div', { class: 'panel' }, h('h2', {}, 'Steps'), h('ol', { class: 'steps' }, r.steps.map((s) => h('li', {}, h('span', {}, s))))),
       commentsBox(r))));
@@ -388,29 +450,6 @@ async function answerInvite(recipeId, action) {
   } catch (err) { toast(err.message); }
 }
 
-function sharePanel(r) {
-  const input = h('input', { type: 'text', placeholder: 'Jace username, like momchef', 'aria-label': 'Jace username to invite' });
-  const msg = h('div');
-  const people = (r.collaborators || []).map((c) => h('div', { class: 'item' }, avatar(c, 'md'),
-    h('div', { class: 'grow' }, h('a', { class: 'title', href: `#/u/${c.username}` }, c.displayName), h('div', { class: 'muted', style: 'font-size:.88rem' }, `@${c.username} · ${c.status === 'accepted' ? 'Making it with you' : 'Invite sent'}`)),
-    h('button', { class: 'btn small danger', onclick: async () => {
-      await api('DELETE', `/api/recipes/${r.id}/collaborators/${encodeURIComponent(c.username)}`);
-      toast(c.status === 'accepted' ? `Removed @${c.username}` : 'Invite cancelled'); route();
-    } }, c.status === 'accepted' ? 'Remove' : 'Cancel invite')));
-  return h('div', { class: 'panel hidden', id: 'share' },
-    h('h2', {}, '👥 Make it together'),
-    h('p', { class: 'muted', style: 'margin-top:0' }, 'Invite people by their Jace username. They get a notification, and once they accept they can edit this recipe with you.'),
-    h('form', { class: 'add-row', onsubmit: async (e) => {
-      e.preventDefault(); msg.replaceChildren();
-      try {
-        await api('POST', `/api/recipes/${r.id}/collaborators`, { username: input.value });
-        toast(`Invite sent to @${input.value.replace(/^@/, '')}`); await route();
-        document.getElementById('share')?.classList.remove('hidden');
-      } catch (err) { msg.replaceChildren(errorBox(err)); }
-    } }, input, h('button', { class: 'btn primary' }, 'Invite')),
-    msg,
-    people.length ? h('div', { class: 'list', style: 'padding:0' }, people) : null);
-}
 
 const NOTE_TEXT = {
   invite: (n) => [h('strong', {}, n.actor?.displayName || 'Someone'), ' invited you to make ', h('strong', {}, n.recipeTitle || n.data.title || 'a recipe'), ' together'],
@@ -596,82 +635,224 @@ async function takedown(id) {
   route();
 }
 
+// The recipe editor. New recipes and drafts save themselves as you type (as a draft only you and the
+// people you share it with can see), so you can come back to them again and again. Publish when ready.
+let leaveGuard = null;
+window.addEventListener('beforeunload', (e) => { if (leaveGuard && leaveGuard()) { e.preventDefault(); e.returnValue = ''; } });
+
 async function pageEditor(id, params = new URLSearchParams()) {
   if (!state.me) return go('#/signin');
-  let r = { title: '', description: '', category: state.categories[0], prepTime: '', servings: 4, ingredients: [], steps: [], image: null, verified: false };
+  let r = { title: '', description: '', category: state.categories[0], prepTime: '', servings: 4, ingredients: [], steps: [], image: null, verified: false, visibility: 'public', status: 'new', collaborators: [], isOwner: true };
   const fromAI = !id && params.get('from') === 'ai' && state.aiDraft;
-  if (fromAI) r = { ...r, ...state.aiDraft };
+  if (fromAI) r = { ...r, ...state.aiDraft, status: 'new' };
   if (id) r = (await api('GET', `/api/recipes/${encodeURIComponent(id)}`)).recipe;
+  if (id && !r.canEdit) return go(`#/r/${id}`);
+
+  let recipeId = id || null;
+  let status = r.status;                       // new | draft | pending | published | removed
+  let baseUpdatedAt = r.updatedAt || null;
+  let aiAssisted = Boolean(fromAI || r.aiAssisted);
   let image = r.image;
+  let dirty = false;
+  let saving = null;
+  let overrideNext = false;
+  const isDraft = () => status === 'new' || status === 'draft';
+  const owner = r.isOwner !== false;
+
   const f = {
-    title: h('input', { type: 'text', value: r.title, maxlength: 100, required: true, placeholder: 'Grandma’s Mac and Cheese' }),
-    description: h('textarea', { maxlength: 1000, placeholder: 'What makes it a family favorite?', style: 'min-height:80px' }, r.description),
+    title: h('input', { type: 'text', class: 'editor-title', value: r.title === 'Untitled recipe' ? '' : r.title, maxlength: 100, placeholder: 'Recipe name, like Grandma’s Mac and Cheese', 'aria-label': 'Recipe name' }),
+    description: h('textarea', { maxlength: 1000, placeholder: 'What makes it a family favorite?', style: 'min-height:70px' }, r.description),
     category: h('select', {}, state.categories.map((c) => h('option', { value: c, selected: c === r.category }, c))),
     prepTime: h('input', { type: 'number', min: 0, max: 1440, value: r.prepTime || '', placeholder: '30' }),
     servings: h('input', { type: 'number', min: 1, max: 100, value: r.servings }),
-    ingredients: h('textarea', { placeholder: '2 cups flour\n1 egg\n1 cup milk' }, r.ingredients.join('\n')),
-    steps: h('textarea', { placeholder: 'Mix the dry ingredients.\nAdd the egg and milk.\nCook until golden.' }, r.steps.join('\n')),
+    ingredients: h('textarea', { class: 'lines', placeholder: '2 cups flour\n1 egg\n1 cup milk' }, (r.ingredients || []).join('\n')),
+    steps: h('textarea', { class: 'lines', placeholder: 'Mix the dry ingredients.\nAdd the egg and milk.\nCook until golden.' }, (r.steps || []).join('\n')),
     verified: h('input', { type: 'checkbox', checked: r.verified }),
     autoFix: h('input', { type: 'checkbox', checked: true }),
-    visibility: h('select', {},
-      h('option', { value: 'public', selected: (r.visibility || 'public') === 'public' }, '🌎 Public: everyone can find it'),
-      h('option', { value: 'unlisted', selected: r.visibility === 'unlisted' }, '🔗 Unlisted: only people with the link'),
-      h('option', { value: 'private', selected: r.visibility === 'private' }, '🔒 Private: only you')),
+    visibility: h('select', { class: 'vis-select', 'aria-label': 'Who can see it', disabled: !owner },
+      h('option', { value: 'public', selected: (r.visibility || 'public') === 'public' }, '🌎 Public'),
+      h('option', { value: 'unlisted', selected: r.visibility === 'unlisted' }, '🔗 Unlisted'),
+      h('option', { value: 'private', selected: r.visibility === 'private' }, '🔒 Private')),
   };
-  const preview = h('div', { class: 'photo-preview' });
-  const drawPreview = () => preview.replaceChildren(image ? h('img', { src: image, alt: '' }) : 'No photo');
-  drawPreview();
-  const msg = h('div');
-  const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, id ? 'Save changes' : 'Publish recipe');
 
-  let overrideNext = false;
-  const onsubmit = async (e) => {
-    e.preventDefault(); msg.replaceChildren(); saveBtn.disabled = true;
-    const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted: Boolean(fromAI), autoFix: f.autoFix.checked, visibility: f.visibility.value };
-    if (overrideNext) body.bypassModeration = true;
-    if (canVerify()) body.verified = f.verified.checked;
+  // ---- top toolbar
+  const statusPill = h('span', { class: 'status-pill' });
+  const savedText = h('span', { class: 'saved-text muted' });
+  const draftBtn = h('button', { class: 'btn small', type: 'button' }, 'Save draft');
+  const publishBtn = h('button', { class: 'btn primary small', type: 'button' });
+  const shareBtn = h('button', { class: 'btn small', type: 'button', title: 'Make it together' }, '👥 Share');
+  const viewLink = h('a', { class: 'btn small', href: '#/' }, 'View');
+  const drawBar = () => {
+    const labels = { new: 'New draft', draft: 'Draft', pending: 'In review', published: 'Published', removed: 'Taken down' };
+    statusPill.className = `status-pill ${status}`;
+    statusPill.textContent = labels[status] || status;
+    draftBtn.classList.toggle('hidden', !isDraft());
+    publishBtn.textContent = isDraft() ? (owner ? 'Publish' : 'Only the owner can publish') : 'Save changes';
+    publishBtn.disabled = isDraft() && !owner;
+    shareBtn.classList.toggle('hidden', !owner);
+    viewLink.classList.toggle('hidden', !recipeId);
+    if (recipeId) viewLink.href = `#/r/${recipeId}`;
+  };
+  const setSaved = (text) => { savedText.textContent = text; };
+
+  // ---- body
+  const msg = h('div');
+  const preview = h('div', { class: 'photo-preview' });
+  const drawPreview = () => preview.replaceChildren(image ? h('img', { src: image, alt: '' }) : h('span', {}, '📷', h('br'), 'No photo'));
+  drawPreview();
+  const team = h('div', { class: 'editor-team' });
+  const drawTeam = () => {
+    const people = (r.collaborators || []);
+    team.replaceChildren(...(people.length ? [h('span', { class: 'muted' }, '👥 '), ...people.map((c, i) => [i ? ', ' : '', h('span', { title: c.status === 'accepted' ? 'Making it with you' : 'Invite sent' }, c.displayName, c.status === 'invited' ? h('span', { class: 'muted' }, ' (invited)') : '')])] : []));
+  };
+  drawTeam();
+
+  const body = () => ({
+    title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value,
+    ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted, autoFix: f.autoFix.checked, visibility: f.visibility.value,
+    ...(canVerify() ? { verified: f.verified.checked } : {}),
+    ...(baseUpdatedAt ? { baseUpdatedAt } : {}),
+  });
+
+  const conflict = (err) => msg.replaceChildren(h('div', { class: 'notice warn' }, h('strong', {}, 'Someone else saved this recipe while you were editing. '),
+    'Load their version to keep going (copy anything you want to keep first).',
+    h('div', { class: 'actions', style: 'margin:8px 0 0' }, h('button', { class: 'btn small', type: 'button', onclick: () => { dirty = false; route(); } }, 'Load the latest'))));
+
+  // Save as a draft (also used by autosave). Returns true when saved.
+  async function saveDraft({ quiet = false } = {}) {
+    if (!isDraft() || saving) return false;
+    saving = (async () => {
+      setSaved('Saving…');
+      try {
+        const res = recipeId
+          ? await api('PUT', `/api/recipes/${recipeId}`, { ...body(), draft: true })
+          : await api('POST', '/api/recipes', { ...body(), draft: true });
+        const first = !recipeId;
+        r = res.recipe; recipeId = r.id; status = r.status; baseUpdatedAt = r.updatedAt; image = r.image; dirty = false;
+        if (first) history.replaceState(null, '', `#/edit/${recipeId}`);
+        drawBar(); drawTeam();
+        setSaved(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
+        if (!quiet) toast('Draft saved. Open it again any time from your profile.');
+        return true;
+      } catch (err) {
+        if (err.data && err.data.conflict) conflict(err); else if (!quiet) msg.replaceChildren(errorBox(err));
+        setSaved('Not saved');
+        return false;
+      } finally { saving = null; }
+    })();
+    return saving;
+  }
+
+  async function publish() {
+    msg.replaceChildren();
+    if (saving) await saving;
+    publishBtn.disabled = true;
+    publishBtn.textContent = f.autoFix.checked ? 'Checking spelling…' : 'Saving…';
     try {
-      saveBtn.textContent = f.autoFix.checked ? 'Checking spelling…' : 'Saving…';
-      const { recipe, fixes } = await api(id ? 'PUT' : 'POST', id ? `/api/recipes/${id}` : '/api/recipes', body);
+      const b = body();
+      if (overrideNext) b.bypassModeration = true;
+      const { recipe, fixes } = recipeId ? await api('PUT', `/api/recipes/${recipeId}`, b) : await api('POST', '/api/recipes', b);
+      dirty = false; leaveGuard = null;
       if (fixes) setTimeout(() => toast(`✨ Fixed ${fixes} spelling or grammar thing${fixes === 1 ? '' : 's'}`), 2700);
       if (fromAI) state.aiDraft = null;
-      toast(recipe.status === 'pending' ? 'Sent to review before it goes public' : 'Recipe published!');
+      toast(recipe.status === 'pending' ? 'Sent to review before it goes public' : status === 'published' ? 'Changes saved' : 'Recipe published!');
       go(`#/r/${recipe.id}`);
     } catch (err) {
       overrideNext = false;
-      msg.replaceChildren(errorBox(err),
-        err.data && err.data.canOverride ? h('div', { class: 'notice warn' }, h('strong', {}, 'Admin: '), 'you can publish it anyway if auto moderation got it wrong. The reasons stay on record.',
-          h('div', { class: 'actions', style: 'margin:8px 0 0' }, h('button', { class: 'btn danger small', type: 'button', onclick: () => { overrideNext = true; saveBtn.click(); } }, 'Publish anyway (admin)'))) : null);
+      if (err.data && err.data.conflict) conflict(err);
+      else {
+        msg.replaceChildren(errorBox(err),
+          isDraft() ? h('div', { class: 'hint', style: 'margin-top:6px' }, 'Your recipe is still saved as a draft, so nothing is lost. Fix it and publish again.') : null,
+          err.data && err.data.canOverride ? h('div', { class: 'notice warn' }, h('strong', {}, 'Admin: '), 'you can publish it anyway if auto moderation got it wrong. The reasons stay on record.',
+            h('div', { class: 'actions', style: 'margin:8px 0 0' }, h('button', { class: 'btn danger small', type: 'button', onclick: () => { overrideNext = true; publish(); } }, 'Publish anyway (admin)'))) : null);
+      }
       msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } finally { saveBtn.disabled = false; saveBtn.textContent = id ? 'Save changes' : 'Publish recipe'; }
-  };
+      if (isDraft()) saveDraft({ quiet: true });
+    } finally { drawBar(); }
+  }
 
-  app.replaceChildren(h('div', { class: 'form-page' },
-    h('h1', {}, id ? 'Edit recipe' : fromAI ? 'Check your AI recipe' : 'Share a recipe'),
+  // Share needs a saved recipe, so save the draft first.
+  shareBtn.onclick = async () => {
+    if (!recipeId && !(await saveDraft({ quiet: true }))) return;
+    openShareDialog(recipeId, (fresh) => { r = { ...r, collaborators: fresh.collaborators }; drawTeam(); });
+  };
+  draftBtn.onclick = () => saveDraft();
+  publishBtn.onclick = publish;
+
+  // Autosave drafts a few seconds after you stop typing.
+  let timer = null;
+  const changed = () => {
+    dirty = true; setSaved(isDraft() ? 'Unsaved changes…' : 'Unsaved changes');
+    if (isDraft()) { clearTimeout(timer); timer = setTimeout(() => saveDraft({ quiet: true }), 2500); }
+  };
+  for (const el of Object.values(f)) el.addEventListener('input', changed);
+  leaveGuard = () => dirty && location.hash.startsWith('#/edit') || (dirty && location.hash.startsWith('#/new'));
+  window.addEventListener('hashchange', () => { if (dirty && isDraft()) saveDraft({ quiet: true }); }, { once: true });
+
+  drawBar();
+  setSaved(status === 'new' ? 'Saves as a draft while you type' : r.updatedAt ? `Last saved ${timeAgo(r.updatedAt)}` : '');
+
+  app.replaceChildren(h('div', { class: 'editor' },
+    h('div', { class: 'editor-bar' },
+      h('a', { class: 'icon-btn', href: recipeId ? `#/r/${recipeId}` : '#/', title: 'Back', 'aria-label': 'Back', onclick: () => { if (dirty && isDraft()) saveDraft({ quiet: true }); } }, '←'),
+      h('div', { class: 'bar-status' }, statusPill, savedText),
+      h('div', { class: 'bar-actions' }, owner ? f.visibility : null, shareBtn, viewLink, draftBtn, publishBtn)),
     fromAI ? h('div', { class: 'notice warn' }, '✨ This recipe was written by AI. Read every line and fix anything that’s wrong before you publish. It will show a “Made with AI help” tag.') : null,
-    !id && !fromAI && state.ai ? h('p', {}, h('a', { href: '#/ai' }, '✨ Or let AI write a first draft for you')) : null,
-    h('p', { class: 'muted' }, 'Every recipe is checked by auto-moderation to keep Jace Recipes safe for families.'),
-    state.me.muted ? h('div', { class: 'notice warn' }, 'Your Jace account is muted, so you can’t post or edit recipes right now.') : null,
-    h('form', { class: 'panel', onsubmit },
-      h('label', {}, 'Title'), f.title,
-      h('label', {}, 'Short description'), f.description,
-      h('div', { class: 'row' },
-        h('div', {}, h('label', {}, 'Category'), f.category),
-        h('div', {}, h('label', {}, 'Time (minutes)'), f.prepTime),
-        h('div', {}, h('label', {}, 'Serves'), f.servings)),
-      h('label', {}, 'Ingredients ', h('span', { class: 'hint' }, '(one per line)')), f.ingredients,
-      h('label', {}, 'Steps ', h('span', { class: 'hint' }, '(one per line)')), f.steps,
-      h('label', {}, 'Photo'),
-      h('div', { class: 'photo-pick' }, preview,
-        h('button', { class: 'btn small', type: 'button', onclick: async () => { const d = await pickImage(1000, 0.8); if (d) { image = d; drawPreview(); } } }, 'Choose photo'),
-        h('button', { class: 'btn small', type: 'button', onclick: () => { image = null; drawPreview(); } }, 'Remove')),
-      !id || r.isOwner ? [h('label', {}, 'Who can see it'), f.visibility,
-        h('div', { class: 'hint', style: 'margin-top:4px' }, 'Unlisted recipes don’t show in lists or search. Private recipes are only for you and people you share them with (Jace Recipes admins can still see them to keep the site safe).')]
-        : h('p', { class: 'hint' }, `You’re editing ${r.author.displayName}’s recipe together. Only they can change who can see it.`),
-      h('label', { class: 'check' }, f.autoFix, '✨ Fix my spelling and grammar automatically', h('span', { class: 'hint' }, ' (amounts never change)')),
-      canVerify() ? h('label', { class: 'check' }, f.verified, verifiedBadge(), 'Post as a Jace Verified recipe') : null,
+    !id && !fromAI ? h('p', { class: 'hint' }, h('a', { href: '#/ai' }, '✨ Or let AI write a first draft for you (Jace AI or your own)')) : null,
+    !owner ? h('p', { class: 'hint' }, `You’re editing ${r.author.displayName}’s recipe together. Only they can publish it or change who can see it.`) : null,
+    team,
+    msg,
+    h('div', { class: 'editor-grid' },
+      h('div', { class: 'editor-main panel' },
+        f.title,
+        h('label', {}, 'Short description'), f.description,
+        h('label', {}, 'Ingredients ', h('span', { class: 'hint' }, '(one per line, with amounts)')), f.ingredients,
+        h('label', {}, 'Steps ', h('span', { class: 'hint' }, '(one per line)')), f.steps),
+      h('aside', { class: 'editor-side' },
+        h('div', { class: 'panel' },
+          h('h3', {}, 'Photo'),
+          h('div', { class: 'photo-pick', style: 'flex-direction:column;align-items:stretch' }, preview,
+            h('div', { class: 'actions', style: 'margin:0' },
+              h('button', { class: 'btn small', type: 'button', onclick: async () => { const d = await pickImage(1000, 0.8); if (d) { image = d; drawPreview(); changed(); } } }, 'Choose photo'),
+              h('button', { class: 'btn small', type: 'button', onclick: () => { image = null; drawPreview(); changed(); } }, 'Remove')))),
+        h('div', { class: 'panel' },
+          h('h3', {}, 'Details'),
+          h('label', { style: 'margin-top:0' }, 'Category'), f.category,
+          h('div', { class: 'row' }, h('div', {}, h('label', {}, 'Time (min)'), f.prepTime), h('div', {}, h('label', {}, 'Serves'), f.servings))),
+        h('div', { class: 'panel' },
+          h('h3', {}, 'Options'),
+          h('label', { class: 'check', style: 'margin-top:0' }, f.autoFix, '✨ Fix spelling and grammar when I publish'),
+          canVerify() ? h('label', { class: 'check' }, f.verified, verifiedBadge(), 'Jace Verified recipe') : null,
+          h('p', { class: 'hint', style: 'margin-bottom:0' }, '🌎 Public: everyone can find it. 🔗 Unlisted: only people with the link. 🔒 Private: only you and people you share it with. Drafts are only for you and the people you share them with.'))))));
+}
+
+// A small dialog for inviting people, usable from the editor without leaving it.
+async function openShareDialog(recipeId, onChange) {
+  const dialog = h('dialog', { class: 'share-dialog' });
+  const close = () => { dialog.close(); dialog.remove(); };
+  const draw = async () => {
+    const { recipe } = await api('GET', `/api/recipes/${recipeId}`);
+    onChange && onChange(recipe);
+    const input = h('input', { type: 'text', placeholder: 'Jace username, like momchef', 'aria-label': 'Jace username to invite' });
+    const msg = h('div');
+    dialog.replaceChildren(
+      h('div', { class: 'dialog-head' }, h('h2', {}, '👥 Make it together'), h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', onclick: close }, '×')),
+      h('p', { class: 'muted', style: 'margin-top:0' }, 'Invite people by their Jace username. They get a notification, and once they accept they can edit this recipe with you, even while it’s a draft.'),
+      h('form', { class: 'add-row', onsubmit: async (e) => {
+        e.preventDefault(); msg.replaceChildren();
+        try { await api('POST', `/api/recipes/${recipeId}/collaborators`, { username: input.value }); toast(`Invite sent to @${input.value.replace(/^@/, '')}`); draw(); } catch (err) { msg.replaceChildren(errorBox(err)); }
+      } }, input, h('button', { class: 'btn primary' }, 'Invite')),
       msg,
-      h('div', { class: 'actions', style: 'margin-top:20px' }, saveBtn, h('a', { class: 'btn', href: id ? `#/r/${id}` : '#/' }, 'Cancel')))));
+      (recipe.collaborators || []).length ? h('div', { class: 'list', style: 'padding:0' }, recipe.collaborators.map((c) => h('div', { class: 'item' }, avatar(c, 'md'),
+        h('div', { class: 'grow' }, h('strong', {}, c.displayName), h('div', { class: 'muted', style: 'font-size:.88rem' }, `@${c.username} · ${c.status === 'accepted' ? 'Making it with you' : 'Invite sent'}`)),
+        h('button', { class: 'btn small danger', type: 'button', onclick: async () => { await api('DELETE', `/api/recipes/${recipeId}/collaborators/${encodeURIComponent(c.username)}`); draw(); } }, c.status === 'accepted' ? 'Remove' : 'Cancel invite'))))
+        : h('p', { class: 'hint' }, 'No one yet.'));
+    input.focus();
+  };
+  document.body.append(dialog);
+  dialog.showModal();
+  dialog.addEventListener('close', () => dialog.remove());
+  try { await draw(); } catch (err) { dialog.replaceChildren(errorBox(err), h('button', { class: 'btn', onclick: close }, 'Close')); }
 }
 
 async function pageProfile(username) {
@@ -686,8 +867,12 @@ async function pageProfile(username) {
           h('span', {}, `· ${recipes.length} recipe${recipes.length === 1 ? '' : 's'}`)),
         u.bio ? h('p', { style: 'margin:8px 0 0' }, u.bio) : null),
       mine ? h('div', { class: 'actions' }, h('a', { class: 'btn', href: '#/settings' }, 'Edit profile'), h('button', { class: 'btn', onclick: logout }, 'Sign out')) : null),
+    ...(mine && recipes.some((x) => x.status === 'draft') ? [
+      h('h2', { class: 'section-title' }, '📝 Your drafts'),
+      h('p', { class: 'hint', style: 'margin-top:-6px' }, 'Only you and the people you share them with can see these. Open one to keep working on it.'),
+      grid(recipes.filter((x) => x.status === 'draft'), '')] : []),
     h('h2', { class: 'section-title' }, mine ? 'Your recipes' : 'Recipes'),
-    grid(recipes, mine ? 'You haven’t shared any recipes yet.' : 'No recipes yet.'));
+    grid(recipes.filter((x) => x.status !== 'draft'), mine ? 'You haven’t shared any recipes yet.' : 'No recipes yet.'));
 }
 
 async function pageSettings() {
@@ -851,7 +1036,7 @@ async function route() {
     switch (parts[0]) {
       case undefined: await pageHome(params); break;
       case 'browse': await pageBrowse(params); break;
-      case 'ai': await pageAI(); break;
+      case 'ai': await pageAI(params); break;
       case 'r': await pageRecipe(parts[1]); break;
       case 'new': await pageEditor(undefined, params); break;
       case 'edit': await pageEditor(parts[1]); break;
