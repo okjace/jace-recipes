@@ -425,6 +425,64 @@ const NOTE_TEXT = {
   blocked: (n) => ['Auto moderation blocked ', h('strong', {}, n.data.title || 'a recipe'), n.actor ? [' by ', h('strong', {}, `@${n.actor.username}`)] : ''],
 };
 
+// Jace Recipes rules. Written for parents (and older kids) to read quickly.
+const RULES = [
+  ['🍽️', 'Real, safe food only', [
+    'Share recipes for real food that is safe to eat.',
+    'Never include things that aren’t food (cleaning products, chemicals, medicine, “poison” jokes) or dangerous tricks.',
+    'Follow food safety: say safe cooking temperatures for meat, and don’t serve raw flour or raw eggs to kids.',
+    'No drugs, cannabis edibles, diet pills or “detox” recipes.',
+  ]],
+  ['👶', 'Keep kids in mind', [
+    'Jace Recipes is family friendly. Keep words, photos and jokes OK for kids to see.',
+    'Baby & Toddler recipes: no honey for babies under 1, no alcohol, and cut food so it isn’t a choking hazard.',
+    'Recipes with alcohol must say so clearly and aren’t for kids.',
+  ]],
+  ['⚠️', 'Be honest about allergies', [
+    'List every ingredient, including small ones like nuts, sesame or butter.',
+    'Don’t call a recipe “nut-free”, “dairy-free” or similar unless it really is.',
+    'Allergy warnings on Jace Recipes come from the ingredients list. Always check labels yourself too.',
+  ]],
+  ['💬', 'Be kind', [
+    'Comments and ratings should help other parents. Be kind, even when a recipe didn’t work for you.',
+    'No bullying, hate, insults, threats or harassment of anyone.',
+    'Respect other people’s recipes. Don’t copy someone’s recipe and post it as your own; credit where you got it.',
+  ]],
+  ['🔒', 'Keep things private and safe', [
+    'Don’t share personal information (addresses, phone numbers, school names), yours or anyone else’s.',
+    'No spam, ads, or links to sell things. A link to where a recipe came from is fine, but it may be checked first.',
+    'Only invite people you know to make recipes with you, and only accept invites from people you know.',
+  ]],
+  ['✨', 'AI recipes', [
+    'Read every line of an AI recipe before you share it. AI can make mistakes.',
+    'You’re responsible for anything you publish, even if AI wrote the first draft.',
+    'Recipes made with AI show a “Made with AI help” tag.',
+  ]],
+  ['🛡️', 'How moderation works', [
+    'Every recipe, edit, comment and name is checked by auto moderation. Some are blocked, some wait for a person to review them, and some get safety notes added.',
+    'Auto moderation can make mistakes in both directions. @okjace can approve, publish, take down or restore anything.',
+    'Breaking the rules can get a recipe or comment taken down, and repeat or serious problems can get an account suspended from Jace Recipes.',
+    'Banned or muted Jace accounts are also banned or muted here.',
+  ]],
+];
+
+function pageRules() {
+  app.replaceChildren(h('div', { class: 'form-page rules' },
+    h('a', { class: 'back', href: '#/' }, '← Home'),
+    h('h1', {}, 'Jace Recipes Rules'),
+    h('p', { class: 'muted' }, 'Jace Recipes is a place for parents to share the food their families love. These rules keep it safe and friendly for everyone.'),
+    RULES.map(([icon, title, items]) => h('section', { class: 'panel' },
+      h('h2', {}, h('span', { 'aria-hidden': 'true' }, `${icon} `), title),
+      h('ul', {}, items.map((t) => h('li', {}, t))))),
+    h('div', { class: 'panel' },
+      h('h2', {}, '📄 Jace Terms and Privacy'),
+      h('p', { style: 'margin:0' }, 'Jace Recipes uses your Jace account, so the ',
+        h('a', { href: 'https://github.com/okjace/jace/blob/main/legal/terms-of-service.md', target: '_blank', rel: 'noopener' }, 'Jace Terms of Service'), ' and ',
+        h('a', { href: 'https://github.com/okjace/jace/blob/main/legal/privacy-policy.md', target: '_blank', rel: 'noopener' }, 'Jace Privacy Policy'),
+        ' apply too. See something that breaks these rules? Tell @okjace.')),
+    h('p', { class: 'hint', style: 'text-align:center' }, 'Last updated November 25, 2026.')));
+}
+
 async function pageInbox() {
   if (!state.me) return go('#/signin');
   const { items } = await api('GET', '/api/inbox');
@@ -800,6 +858,7 @@ async function route() {
       case 'u': await pageProfile(parts[1]); break;
       case 'settings': await pageSettings(); break;
       case 'inbox': await pageInbox(); break;
+      case 'rules': pageRules(); break;
       case 'signin': case 'login': case 'register': pageSignIn(params); break;
       case 'signin-error': pageSignIn(params); break;
       case 'admin': await pageAdmin(parts[1]); break;
