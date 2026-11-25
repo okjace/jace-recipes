@@ -104,7 +104,7 @@ test('auto moderation blocks, holds and publishes', async () => {
   const held = await mom('POST', '/api/recipes', { title: 'Pretzels', ingredients: 'food grade lye\nflour', steps: 'bake' });
   assert.equal(held.data.recipe.status, 'pending');
   assert.equal((await client(null)('GET', `/api/recipes/${held.data.recipe.id}`)).status, 404);
-  const ok = await mom('POST', '/api/recipes', { title: 'Honey chicken', ingredients: '1 lb chicken\n2 tbsp honey', steps: 'cook', verified: true });
+  const ok = await mom('POST', '/api/recipes', { title: 'Honey chicken', ingredients: '1 lb chicken\n2 tbsp honey', steps: 'Heat the pan over medium heat, then cook everything for ten minutes, stirring often.', verified: true });
   assert.equal(ok.data.recipe.status, 'published');
   assert.equal(ok.data.recipe.verified, false); // not a verifier yet
   assert.ok(ok.data.recipe.safetyNotes.length >= 2);
@@ -121,7 +121,7 @@ test('only @okjace verifies, takes down and manages verifiers', async () => {
   assert.equal((await admin('POST', `/api/recipes/${momRecipe}/verify`, { verified: true })).data.recipe.verified, true);
   assert.equal((await admin('POST', '/api/admin/users/nobodyyet', { role: 'verifier' })).status, 404);
   assert.equal((await admin('POST', '/api/admin/users/dadcooks', { role: 'verifier' })).data.user.role, 'verifier');
-  const v = await dad('POST', '/api/recipes', { title: 'Easy salad', ingredients: 'lettuce', steps: 'toss', verified: true });
+  const v = await dad('POST', '/api/recipes', { title: 'Easy salad', ingredients: 'lettuce\ncucumber', steps: 'Chop the lettuce and cucumber, then toss them together in a big bowl.', verified: true });
   assert.equal(v.data.recipe.verified, true);
   const down = await admin('POST', `/api/recipes/${momRecipe}/takedown`, { reason: 'Test' });
   assert.equal(down.data.recipe.status, 'removed');
@@ -143,7 +143,7 @@ test('writes need JSON (blocks cross-site form posts)', async () => {
 });
 
 test('authors can delete their own recipes, others cannot', async () => {
-  const made = await mom('POST', '/api/recipes', { title: 'Delete me', ingredients: 'rice', steps: 'cook' });
+  const made = await mom('POST', '/api/recipes', { title: 'Delete me please', ingredients: 'rice\nwater', steps: 'Heat the pan over medium heat, then cook everything for ten minutes, stirring often.' });
   const id = made.data.recipe.id;
   assert.equal((await dad('DELETE', `/api/recipes/${id}`, {})).status, 403);
   assert.equal((await mom('DELETE', `/api/recipes/${id}`, {})).status, 200);
@@ -152,7 +152,7 @@ test('authors can delete their own recipes, others cannot', async () => {
 
 test('filters, sorting and load more', async () => {
   const anon = client(null);
-  for (let i = 0; i < 3; i++) await dad('POST', '/api/recipes', { title: `Milk toast ${i}`, ingredients: '1 cup milk\nbread', steps: 'toast', prepTime: 5 + i });
+  for (let i = 0; i < 3; i++) await dad('POST', '/api/recipes', { title: `Milk toast ${i}`, ingredients: '1 cup milk\nbread', steps: 'Toast the bread, warm the milk, then pour the milk over the toast.', prepTime: 5 + i });
   const community = await anon('GET', '/api/recipes?verified=none');
   assert.ok(community.data.recipes.length > 0 && community.data.recipes.every((r) => !r.verified));
   const verified = await anon('GET', '/api/recipes?verified=only');
@@ -190,4 +190,49 @@ test('AI recipe maker makes a moderated draft', async () => {
   assert.equal(pub.data.recipe.aiAssisted, true);
   const aiOnly = await client(null)('GET', '/api/recipes?ai=only');
   assert.ok(aiOnly.data.recipes.length >= 1 && aiOnly.data.recipes.every((r) => r.aiAssisted));
+});
+
+test('spelling and grammar are fixed when publishing (unless turned off)', async () => {
+  const r = await mom('POST', '/api/recipes', { title: 'choclate banana bites', ingredients: '2 bananas\n1/2 cup choclate chips', steps: 'slice teh bananas into coins and dip each one in melted chocolate.\nchill them in the fridge for 20 minutes untill firm' });
+  assert.equal(r.status, 201);
+  assert.equal(r.data.recipe.title, 'Chocolate Banana Bites'); // mock AI does Title Case
+  assert.equal(r.data.recipe.ingredients[1], '1/2 cup chocolate chips');
+  assert.equal(r.data.recipe.steps[1], 'Chill them in the fridge for 20 minutes until firm.');
+  assert.ok(r.data.fixes >= 3);
+  const off = await mom('POST', '/api/recipes', { title: 'choclate dip for apples', ingredients: '1 cup choclate', steps: 'Melt the chocolate gently, then dip apple slices into it.', autoFix: false });
+  assert.equal(off.data.recipe.title, 'choclate dip for apples');
+});
+
+test('ratings and comments', async () => {
+  const r = (await mom('POST', '/api/recipes', { title: 'Apple Oat Crumble', ingredients: '4 apples\n1 cup oats\n3 tbsp butter', steps: 'Slice the apples into a dish and top with oats mixed with butter.\nBake at 350°F for 30 minutes until golden.' })).data.recipe;
+  assert.equal((await mom('PUT', `/api/recipes/${r.id}/rating`, { stars: 5 })).status, 400); // not your own
+  assert.equal((await dad('PUT', `/api/recipes/${r.id}/rating`, { stars: 9 })).status, 400);
+  await dad('PUT', `/api/recipes/${r.id}/rating`, { stars: 4 });
+  const rated = await admin('PUT', `/api/recipes/${r.id}/rating`, { stars: 5 });
+  assert.equal(rated.data.recipe.rating, 4.5);
+  assert.equal(rated.data.recipe.ratingCount, 2);
+  assert.equal((await dad('GET', `/api/recipes/${r.id}`)).data.recipe.myRating, 4);
+  const top = await client(null)('GET', '/api/recipes?sort=top&verified=none');
+  assert.equal(top.data.recipes[0].id, r.id);
+
+  const ok = await dad('POST', `/api/recipes/${r.id}/comments`, { body: 'Made this tonight, the kids loved it!' });
+  assert.equal(ok.data.comment.status, 'published');
+  assert.equal((await dad('POST', `/api/recipes/${r.id}/comments`, { body: 'this is sh1t' })).status, 422);
+  const held = await dad('POST', `/api/recipes/${r.id}/comments`, { body: 'more at www.example.com' });
+  assert.equal(held.data.comment.status, 'pending');
+  const publicList = await client(null)('GET', `/api/recipes/${r.id}/comments`);
+  assert.equal(publicList.data.comments.length, 1);
+  assert.equal((await admin('GET', '/api/admin/overview')).data.pendingComments.length, 1);
+  await admin('POST', `/api/comments/${held.data.comment.id}/approve`, {});
+  assert.equal((await client(null)('GET', `/api/recipes/${r.id}/comments`)).data.comments.length, 2);
+  assert.equal((await mom('DELETE', `/api/comments/${ok.data.comment.id}`, {})).status, 403);
+  assert.equal((await dad('DELETE', `/api/comments/${ok.data.comment.id}`, {})).status, 200);
+  assert.equal((await client(null)('GET', '/api/recipes?verified=none&sort=top')).data.recipes[0].commentCount, 1);
+});
+
+test('allergies are saved privately', async () => {
+  const me = await dad('PATCH', '/api/me', { allergies: ['milk', 'peanut', 'not-a-thing'] });
+  assert.deepEqual(me.data.user.allergies, ['milk', 'peanut']);
+  assert.deepEqual((await dad('GET', '/api/me')).data.user.allergies, ['milk', 'peanut']);
+  assert.equal((await client(null)('GET', '/api/users/dadcooks')).data.user.allergies, undefined);
 });

@@ -236,3 +236,36 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; }
 .spinner { width: 20px; height: 20px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+/* Ratings, comments, allergies, moderation panel */
+.card-stats { margin-left: auto; display: inline-flex; gap: 10px; white-space: nowrap; }
+.stars-inline { color: #e3a008; letter-spacing: 1px; }
+.stars-inline.big { font-size: 1.15rem; }
+.rating { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin: 4px 0 12px; }
+.rate-me { display: flex; align-items: center; gap: 6px; }
+.star-input { display: inline-flex; }
+.star { background: none; border: 0; font-size: 1.6rem; line-height: 1; padding: 2px; cursor: pointer; color: var(--line); }
+.star.on, .star-input:hover .star { color: #e3a008; }
+.star-input .star:hover ~ .star { color: var(--line); }
+.comments { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.comment { display: flex; gap: 12px; align-items: flex-start; }
+.comment .grow { flex: 1; min-width: 0; }
+.comment p { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: .92rem; }
+.comment-form { display: flex; flex-direction: column; gap: 6px; }
+.comment-form .actions { margin: 4px 0; }
+.safety .checks { list-style: none; padding: 0; margin: 0; }
+.safety .checks li::before { content: "✓ "; color: var(--accent); font-weight: 800; }
+.notice.allergy { background: var(--danger-soft); color: var(--text); border: 2px solid var(--danger); }
+.notice.allergy strong { color: var(--danger); }
+.allergy-tag { background: var(--danger-soft); color: var(--danger); }
+.chip.my-allergies { border-color: var(--danger); color: var(--danger); }
+.allergy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px 14px; }
+.allergy-grid input { accent-color: var(--danger); }
+
+/* Footer links + corner legal notice */
+.footer-links { display: flex; gap: 16px; flex-wrap: wrap; }
+.legal-notice { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: min(340px, calc(100% - 32px)); background: var(--surface); color: var(--text); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 12px; padding: 10px 14px; font-size: .85rem; line-height: 1.4; opacity: 0; transform: translateY(8px); transition: opacity .6s ease, transform .6s ease; }
+.legal-notice.show { opacity: 1; transform: none; }
+.legal-notice a { color: var(--accent); font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { .legal-notice { transition: opacity .3s; transform: none; } }

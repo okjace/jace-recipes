@@ -72,7 +72,12 @@ createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req) || '{}');
     const ask = String(body.messages?.at(-1)?.content || '').toLowerCase();
     let answer;
-    if (ask.includes('trick')) answer = { title: 'Trick drink', description: 'Bad', category: 'Drinks', prepTime: 1, servings: 1, ingredients: ['1 cup bleach'], steps: ['Mix.'] };
+    // Proofreading: give the recipe back with "choclate" fixed and Title Case, like a real model would.
+    if (String(body.messages?.[0]?.content || '').includes('proofreader')) {
+      const r = JSON.parse(body.messages.at(-1).content);
+      const fix = (t) => String(t).replace(/choclate/gi, 'chocolate');
+      answer = { title: fix(r.title).replace(/\b\w/g, (c) => c.toUpperCase()), description: fix(r.description), ingredients: r.ingredients.map(fix), steps: r.steps.map(fix) };
+    } else if (ask.includes('trick')) answer = { title: 'Trick drink', description: 'Bad', category: 'Drinks', prepTime: 1, servings: 1, ingredients: ['1 cup bleach'], steps: ['Mix.'] };
     else if (ask.includes('homework')) answer = { error: 'I can only help with recipes.' };
     else answer = { title: 'Cheesy Chicken Rice Bake', description: 'A cozy one-dish dinner picky eaters love.', category: 'Dinner', prepTime: 45, servings: 4,
       ingredients: ['1 lb chicken breast, diced', '1 cup rice', '2 cups chicken broth', '1 cup shredded cheddar', '1 cup frozen peas'],

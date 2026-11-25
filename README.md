@@ -9,6 +9,11 @@ Recipes made by parents, for families. Part of [Jace](https://jaceo.vercel.app).
 - **Auto moderation** checks every recipe and name ([`lib/moderation.js`](lib/moderation.js)).
 - **Make a recipe with AI** using free OpenRouter models. The AI writes a draft the parent checks and edits; it's moderated before and after, and published recipes show a "Made with AI help" tag.
 - **Browse with filters:** Jace Verified or community, category, time, allergy-free (peanut, nuts, dairy, egg, wheat, soy, fish, shellfish, sesame), made with AI or not, sorted newest, quickest or A to Z, with "Load more". The home page has "View all" links for verified and community recipes.
+- **Ratings and comments:** 1 to 5 stars (not on your own recipe) and comments, both auto moderated. Comments with links or unkind words wait for @okjace. Browse can sort by top rated.
+- **Allergy warnings:** people save their family's allergies in Settings (private). Recipes containing them get a warning on the card and a big alert on the recipe page, and Browse has a "Hide my allergies" button.
+- **Auto spelling and grammar fixes** when a recipe is published (can be turned off per recipe). The AI proofreads; any line where a number or amount changed is thrown away. Without the AI, a built-in fixer handles common misspellings, capitals and full stops ([`lib/polish.js`](lib/polish.js)).
+- Every recipe page shows what **auto moderation** checked, plus its safety notes. Vague or low-effort recipes (like a one-word title with tiny steps) wait for review.
+- Links to the **Jace Terms and Privacy Policy** in the footer, and a note in the corner on each visit that fades after 5 seconds.
 - Jace colors with **light and dark mode** (follows the device, or pick with the sun/moon button).
 
 Plain Node.js with no framework: static files in [`public/`](public), one Vercel function in [`api/index.js`](api/index.js), and the API in [`lib/app.js`](lib/app.js). Data lives in Neon Postgres.

@@ -134,11 +134,19 @@ function recipeCard(r) {
         r.verified ? verifiedBadge() : null,
         h('span', { class: 'tag' }, r.category),
         r.aiAssisted ? h('span', { class: 'tag ai-tag', title: 'Made with AI help' }, '✨ AI') : null,
+        myAllergyHits(r).length ? h('span', { class: 'tag allergy-tag', title: 'Contains something on your allergy list' }, `⚠️ ${myAllergyHits(r).map((a) => ALLERGY_NAMES[a]).join(', ')}`) : null,
         r.status !== 'published' ? h('span', { class: `status-pill ${r.status}` }, r.status === 'pending' ? 'In review' : 'Taken down') : null),
       h('h3', { class: 'card-title' }, r.title),
       r.description ? h('div', { class: 'muted', style: 'font-size:.92rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden' }, r.description) : null,
-      h('div', { class: 'card-meta' }, avatar(r.author), h('span', {}, r.author.displayName), userCheck(r.author), r.prepTime ? h('span', { style: 'margin-left:auto' }, `⏱ ${r.prepTime} min`) : null)));
+      h('div', { class: 'card-meta' }, avatar(r.author), h('span', {}, r.author.displayName), userCheck(r.author),
+        h('span', { class: 'card-stats' },
+          r.ratingCount ? h('span', { title: `${r.rating} out of 5 from ${r.ratingCount} rating${r.ratingCount === 1 ? '' : 's'}` }, h('span', { class: 'stars-inline' }, '★'), ` ${r.rating}`) : null,
+          r.commentCount ? h('span', { title: `${r.commentCount} comment${r.commentCount === 1 ? '' : 's'}` }, `💬 ${r.commentCount}`) : null,
+          r.prepTime ? h('span', {}, `⏱ ${r.prepTime} min`) : null))));
 }
+const ALLERGY_NAMES = { peanut: 'peanuts', 'tree nuts': 'tree nuts', milk: 'dairy', eggs: 'eggs', wheat: 'wheat', soy: 'soy', fish: 'fish', shellfish: 'shellfish', sesame: 'sesame' };
+const myAllergyHits = (r) => (state.me && state.me.allergies ? (r.allergens || []).filter((a) => state.me.allergies.includes(a)) : []);
+const starText = (n) => '★★★★★'.slice(0, Math.round(n)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(n));
 const grid = (list, emptyText) => list.length ? h('div', { class: 'grid' }, list.map(recipeCard)) : h('div', { class: 'empty' }, emptyText);
 
 // ------------------------------------------------------------ pages
@@ -231,10 +239,13 @@ async function pageBrowse(params) {
         select('verified', 'Show', [['', 'All recipes'], ['only', 'Jace Verified only'], ['none', 'Community only']]),
         select('category', 'Category', [['', 'Any category'], ...state.categories.map((c) => [c, c])]),
         select('maxTime', 'Time', [['', 'Any time'], ['15', '15 min or less'], ['30', '30 min or less'], ['60', '1 hour or less']]),
-        select('sort', 'Sort', [['', 'Newest'], ['quick', 'Quickest'], ['az', 'A to Z']]),
+        select('sort', 'Sort', [['', 'Newest'], ['top', 'Top rated'], ['quick', 'Quickest'], ['az', 'A to Z']]),
         select('ai', 'AI', [['', 'Any'], ['none', 'Not made with AI'], ['only', 'Made with AI help']])),
       h('div', { class: 'chips allergen-chips', role: 'group', 'aria-label': 'Allergy filters' },
         h('span', { class: 'muted', style: 'font-weight:700;align-self:center' }, 'Allergies:'),
+        state.me && state.me.allergies && state.me.allergies.length
+          ? h('button', { class: 'chip my-allergies', onclick: () => set('free', [...new Set([...free, ...state.me.allergies])].join(',')) }, '⚠️ Hide my allergies')
+          : state.me ? h('a', { class: 'chip', href: '#/settings' }, '+ Save my allergies') : null,
         state.allergens.map((a) => h('button', { class: `chip${free.includes(a) ? ' on' : ''}`, 'aria-pressed': String(free.includes(a)), onclick: () => toggleFree(a) }, ALLERGEN_LABELS[a] || `${a}-free`))),
       h('p', { class: 'hint' }, 'Allergy filters use the ingredients list. Always read the ingredients yourself if someone has a serious allergy.'),
       activeCount ? h('a', { class: 'btn small', href: '#/browse', style: 'margin-bottom:8px' }, 'Clear filters') : null),
@@ -296,6 +307,17 @@ async function pageRecipe(id) {
   const notices = [];
   if (r.status === 'pending') notices.push(h('div', { class: 'notice warn' }, h('strong', {}, 'Waiting for review. '), 'Auto-moderation sent this recipe to @okjace before it goes public.', r.modReasons && r.modReasons.length ? h('ul', {}, r.modReasons.map((x) => h('li', {}, x))) : null));
   if (r.status === 'removed') notices.push(h('div', { class: 'notice error' }, h('strong', {}, 'Taken down by @okjace. '), r.takedownReason || ''));
+  if (r.status === 'published' && r.modReasons && r.modReasons.length) {
+    notices.push(h('div', { class: 'notice warn' }, h('strong', {}, '🛡️ Auto moderation flagged this. '),
+      isAdmin() && mine ? 'It went live because you’re the admin. Other people’s recipes like this wait for your review.' : 'It was approved by @okjace.',
+      h('ul', {}, r.modReasons.map((x) => h('li', {}, x)))));
+  }
+  const hits = myAllergyHits(r);
+  if (hits.length) {
+    notices.unshift(h('div', { class: 'notice allergy', role: 'alert' }, h('strong', {}, '⚠️ Allergy warning: '),
+      `this recipe contains ${hits.map((a) => ALLERGY_NAMES[a]).join(', ')}, which ${hits.length === 1 ? 'is' : 'are'} on your allergy list.`,
+      h('div', { class: 'hint', style: 'margin-top:4px' }, 'Found from the ingredients list. Always check labels too.')));
+  }
 
   const adminBar = isAdmin() ? h('div', { class: 'admin-bar' },
     h('strong', {}, 'Admin'),
@@ -307,7 +329,7 @@ async function pageRecipe(id) {
   app.replaceChildren(h('article', { class: 'recipe' },
     h('div', {},
       h('div', { class: 'recipe-hero' }, r.image ? h('img', { src: r.image, alt: r.title }) : EMOJI[r.category] || '🍽️'),
-      r.safetyNotes.length ? h('div', { class: 'safety' }, h('h3', {}, '🛡️ Safety notes'), h('ul', {}, r.safetyNotes.map((n) => h('li', {}, n))), h('div', { class: 'muted', style: 'font-size:.8rem;margin-top:6px' }, 'Added automatically by Jace Recipes auto-moderation.')) : null),
+      moderationPanel(r)),
     h('div', {},
       notices,
       h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, r.verified ? verifiedBadge() : null, h('a', { class: 'tag', href: browseHref({ category: r.category }), style: 'text-decoration:none' }, r.category), r.aiAssisted ? h('span', { class: 'tag ai-tag' }, '✨ Made with AI help') : null),
@@ -315,6 +337,7 @@ async function pageRecipe(id) {
       h('a', { class: 'byline', href: `#/u/${r.author.username}` }, avatar(r.author, 'md'), h('div', {}, h('div', { style: 'display:flex;align-items:center;gap:6px;font-weight:800' }, r.author.displayName, userCheck(r.author)), h('div', { class: 'muted', style: 'font-size:.88rem' }, `@${r.author.username} · ${timeAgo(r.createdAt)}`))),
       r.description ? h('p', {}, r.description) : null,
       h('div', { class: 'facts' }, r.prepTime ? h('span', { class: 'tag' }, `⏱ ${r.prepTime} min`) : null, h('span', { class: 'tag' }, `🍽 Serves ${r.servings}`)),
+      ratingBox(r, mine),
       adminBar,
       (mine || isAdmin()) ? h('div', { class: 'actions' },
         r.status !== 'removed' || isAdmin() ? h('a', { class: 'btn small', href: `#/edit/${r.id}` }, 'Edit') : null,
@@ -323,7 +346,79 @@ async function pageRecipe(id) {
           try { await api('DELETE', `/api/recipes/${r.id}`); toast('Recipe deleted'); go(`#/u/${state.me.username}`); } catch (err) { toast(err.message); }
         } }, 'Delete')) : null,
       h('div', { class: 'panel' }, h('h2', {}, 'Ingredients'), h('ul', { class: 'ingredients' }, r.ingredients.map((i) => h('li', {}, h('input', { type: 'checkbox', 'aria-label': `Got ${i}` }), h('span', {}, i))))),
-      h('div', { class: 'panel' }, h('h2', {}, 'Steps'), h('ol', { class: 'steps' }, r.steps.map((s) => h('li', {}, h('span', {}, s))))))));
+      h('div', { class: 'panel' }, h('h2', {}, 'Steps'), h('ol', { class: 'steps' }, r.steps.map((s) => h('li', {}, h('span', {}, s))))),
+      commentsBox(r))));
+}
+
+function moderationPanel(r) {
+  return h('div', { class: 'safety' },
+    h('h3', {}, '🛡️ Checked by auto moderation'),
+    h('ul', { class: 'checks' }, (r.checks || []).map((c) => h('li', {}, c))),
+    r.safetyNotes.length ? [h('h3', { style: 'margin-top:12px' }, 'Safety notes'), h('ul', {}, r.safetyNotes.map((n) => h('li', {}, n)))] : null,
+    h('div', { class: 'muted', style: 'font-size:.8rem;margin-top:8px' }, 'Jace Recipes checks every recipe for unsafe ingredients, allergens and bad language. It can miss things, so use your own judgment too.'));
+}
+
+function ratingBox(r, mine) {
+  const summary = h('div', { class: 'rating-summary' },
+    r.ratingCount ? [h('span', { class: 'stars-inline big', 'aria-hidden': 'true' }, starText(r.rating)), h('strong', {}, ` ${r.rating}`), h('span', { class: 'muted' }, ` (${r.ratingCount} rating${r.ratingCount === 1 ? '' : 's'})`)]
+      : h('span', { class: 'muted' }, 'No ratings yet'));
+  if (!state.me || mine || r.status !== 'published') return h('div', { class: 'rating' }, summary);
+  const stars = h('div', { class: 'star-input', role: 'radiogroup', 'aria-label': 'Your rating' });
+  for (let n = 1; n <= 5; n++) {
+    stars.append(h('button', {
+      type: 'button', class: `star${r.myRating >= n ? ' on' : ''}`, role: 'radio', 'aria-checked': String(r.myRating === n), 'aria-label': `${n} star${n === 1 ? '' : 's'}`,
+      onclick: async () => {
+        try {
+          const { recipe } = await api('PUT', `/api/recipes/${r.id}/rating`, { stars: r.myRating === n ? 0 : n });
+          toast(recipe.myRating ? `You rated it ${recipe.myRating} star${recipe.myRating === 1 ? '' : 's'}` : 'Rating removed');
+          Object.assign(r, { rating: recipe.rating, ratingCount: recipe.ratingCount, myRating: recipe.myRating });
+          box.replaceWith(ratingBox(r, mine));
+        } catch (err) { toast(err.message); }
+      },
+    }, '★'));
+  }
+  const box = h('div', { class: 'rating' }, summary, h('div', { class: 'rate-me' }, h('span', { class: 'muted' }, r.myRating ? 'Your rating:' : 'Rate it:'), stars));
+  return box;
+}
+
+function commentsBox(r) {
+  const list = h('div', { class: 'comments' }, h('div', { class: 'muted' }, 'Loading comments…'));
+  const title = h('h2', {}, 'Comments');
+  const draw = (comments) => {
+    title.textContent = comments.length ? `Comments (${comments.length})` : 'Comments';
+    list.replaceChildren(...(comments.length ? comments.map((c) => h('div', { class: 'comment' },
+      avatar(c.author, 'md'),
+      h('div', { class: 'grow' },
+        h('div', { class: 'comment-head' }, h('a', { href: `#/u/${c.author.username}`, style: 'font-weight:800;text-decoration:none' }, c.author.displayName), userCheck(c.author), h('span', { class: 'muted' }, `@${c.author.username} · ${timeAgo(c.createdAt)}`),
+          c.status === 'pending' ? h('span', { class: 'status-pill pending' }, 'Waiting for review') : null),
+        h('p', {}, c.body),
+        c.status === 'pending' && c.modReasons && c.modReasons.length ? h('div', { class: 'hint' }, `Auto moderation: ${c.modReasons.join(' ')}`) : null,
+        h('div', { class: 'actions', style: 'margin:4px 0 0' },
+          isAdmin() && c.status === 'pending' ? h('button', { class: 'btn small', onclick: async () => { await api('POST', `/api/comments/${c.id}/approve`); toast('Comment approved'); load(); } }, 'Approve') : null,
+          c.mine || isAdmin() ? h('button', { class: 'btn small danger', onclick: async () => { if (!confirm('Delete this comment?')) return; try { await api('DELETE', `/api/comments/${c.id}`); toast('Comment deleted'); load(); } catch (err) { toast(err.message); } } }, c.mine ? 'Delete' : 'Take down') : null))))
+      : [h('div', { class: 'muted' }, 'No comments yet. Made it? Tell other parents how it went!')]));
+  };
+  const load = async () => { try { draw((await api('GET', `/api/recipes/${r.id}/comments`)).comments); } catch (err) { list.replaceChildren(errorBox(err)); } };
+  load();
+
+  let form = null;
+  if (state.me && r.status === 'published' && !state.me.muted) {
+    const text = h('textarea', { maxlength: 1000, required: true, placeholder: 'Made it? Share how it went or a tip for other parents.', style: 'min-height:80px' });
+    const msg = h('div');
+    form = h('form', { class: 'comment-form', onsubmit: async (e) => {
+      e.preventDefault(); msg.replaceChildren();
+      try {
+        const { comment } = await api('POST', `/api/recipes/${r.id}/comments`, { body: text.value });
+        text.value = '';
+        toast(comment.status === 'pending' ? 'Your comment will show after a quick review' : 'Comment posted');
+        load();
+      } catch (err) { msg.replaceChildren(errorBox(err)); }
+    } }, text, msg, h('div', { class: 'actions' }, h('button', { class: 'btn primary small' }, 'Post comment')),
+    h('div', { class: 'hint' }, 'Comments are checked by auto moderation. Be kind!'));
+  } else if (!state.me) {
+    form = h('p', {}, signInButton(location.hash.slice(1) ? `/${location.hash}` : '/', 'small'), ' to rate and comment.');
+  }
+  return h('div', { class: 'panel', id: 'comments' }, title, form, list);
 }
 
 async function takedown(id) {
@@ -350,6 +445,7 @@ async function pageEditor(id, params = new URLSearchParams()) {
     ingredients: h('textarea', { placeholder: '2 cups flour\n1 egg\n1 cup milk' }, r.ingredients.join('\n')),
     steps: h('textarea', { placeholder: 'Mix the dry ingredients.\nAdd the egg and milk.\nCook until golden.' }, r.steps.join('\n')),
     verified: h('input', { type: 'checkbox', checked: r.verified }),
+    autoFix: h('input', { type: 'checkbox', checked: true }),
   };
   const preview = h('div', { class: 'photo-preview' });
   const drawPreview = () => preview.replaceChildren(image ? h('img', { src: image, alt: '' }) : 'No photo');
@@ -359,14 +455,16 @@ async function pageEditor(id, params = new URLSearchParams()) {
 
   const onsubmit = async (e) => {
     e.preventDefault(); msg.replaceChildren(); saveBtn.disabled = true;
-    const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted: Boolean(fromAI) };
+    const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted: Boolean(fromAI), autoFix: f.autoFix.checked };
     if (canVerify()) body.verified = f.verified.checked;
     try {
-      const { recipe } = await api(id ? 'PUT' : 'POST', id ? `/api/recipes/${id}` : '/api/recipes', body);
+      saveBtn.textContent = f.autoFix.checked ? 'Checking spelling…' : 'Saving…';
+      const { recipe, fixes } = await api(id ? 'PUT' : 'POST', id ? `/api/recipes/${id}` : '/api/recipes', body);
+      if (fixes) setTimeout(() => toast(`✨ Fixed ${fixes} spelling or grammar thing${fixes === 1 ? '' : 's'}`), 2700);
       if (fromAI) state.aiDraft = null;
       toast(recipe.status === 'pending' ? 'Sent to review before it goes public' : 'Recipe published!');
       go(`#/r/${recipe.id}`);
-    } catch (err) { msg.replaceChildren(errorBox(err)); msg.scrollIntoView({ behavior: 'smooth', block: 'center' }); } finally { saveBtn.disabled = false; }
+    } catch (err) { msg.replaceChildren(errorBox(err)); msg.scrollIntoView({ behavior: 'smooth', block: 'center' }); } finally { saveBtn.disabled = false; saveBtn.textContent = id ? 'Save changes' : 'Publish recipe'; }
   };
 
   app.replaceChildren(h('div', { class: 'form-page' },
@@ -388,6 +486,7 @@ async function pageEditor(id, params = new URLSearchParams()) {
       h('div', { class: 'photo-pick' }, preview,
         h('button', { class: 'btn small', type: 'button', onclick: async () => { const d = await pickImage(1000, 0.8); if (d) { image = d; drawPreview(); } } }, 'Choose photo'),
         h('button', { class: 'btn small', type: 'button', onclick: () => { image = null; drawPreview(); } }, 'Remove')),
+      h('label', { class: 'check' }, f.autoFix, '✨ Fix my spelling and grammar automatically', h('span', { class: 'hint' }, ' (amounts never change)')),
       canVerify() ? h('label', { class: 'check' }, f.verified, verifiedBadge(), 'Post as a Jace Verified recipe') : null,
       msg,
       h('div', { class: 'actions', style: 'margin-top:20px' }, saveBtn, h('a', { class: 'btn', href: id ? `#/r/${id}` : '#/' }, 'Cancel')))));
@@ -420,13 +519,14 @@ async function pageSettings() {
   const name = h('input', { type: 'text', value: me.displayName, maxlength: 40, required: true });
   const bio = h('textarea', { maxlength: 300, style: 'min-height:80px', placeholder: 'Mom of 3, loves quick dinners…' }, me.bio || '');
   const msg = h('div');
+  const allergyBoxes = state.allergens.map((a) => h('input', { type: 'checkbox', value: a, checked: (me.allergies || []).includes(a) }));
 
   app.replaceChildren(h('div', { class: 'form-page' },
     h('h1', {}, 'Your Jace Recipes profile'),
     h('form', { class: 'panel', onsubmit: async (e) => {
       e.preventDefault(); msg.replaceChildren();
       try {
-        state.me = (await api('PATCH', '/api/me', { displayName: name.value, bio: bio.value, avatar: avatarData })).user;
+        state.me = (await api('PATCH', '/api/me', { displayName: name.value, bio: bio.value, avatar: avatarData, allergies: allergyBoxes.filter((b) => b.checked).map((b) => b.value) })).user;
         renderNav(); toast('Profile saved'); go(`#/u/${me.username}`);
       } catch (err) { msg.replaceChildren(errorBox(err)); }
     } },
@@ -439,6 +539,9 @@ async function pageSettings() {
         removeBtn),
       h('label', {}, 'Display name'), name,
       h('label', {}, 'Bio'), bio,
+      h('label', {}, '⚠️ Allergies in your family'),
+      h('div', { class: 'hint', style: 'margin-bottom:8px' }, 'Recipes with these get a warning just for you. Only you can see this list.'),
+      h('div', { class: 'allergy-grid' }, allergyBoxes.map((b) => h('label', { class: 'check', style: 'margin:0' }, b, ALLERGEN_LABELS[b.value].replace('-free', '')))),
       msg,
       h('div', { class: 'actions', style: 'margin-top:20px' }, h('button', { class: 'btn primary' }, 'Save'), h('a', { class: 'btn', href: `#/u/${me.username}` }, 'Cancel')))));
 }
@@ -462,7 +565,7 @@ function pageSignIn(params) {
 async function pageAdmin(tab = 'queue') {
   if (!isAdmin()) return go('#/');
   const data = await api('GET', '/api/admin/overview');
-  const tabs = [['queue', `Review queue (${data.pending.length})`], ['verified', `Verified recipes (${data.verified.length})`], ['people', 'People & verifiers'], ['removed', `Taken down (${data.removed.length})`]];
+  const tabs = [['queue', `Review queue (${data.pending.length})`], ['verified', `Verified recipes (${data.verified.length})`], ['people', 'People & verifiers'], ['removed', `Taken down (${data.removed.length})`], ['comments', `Comments to check (${data.pendingComments.length})`]];
   const reload = () => pageAdmin(tab);
 
   const recipeRow = (r, buttons) => h('div', { class: 'item' },
@@ -482,6 +585,13 @@ async function pageAdmin(tab = 'queue') {
   } else if (tab === 'verified') {
     body = [h('p', { class: 'muted' }, 'Open any recipe and press “Make Jace Verified” to add it here.'),
       data.verified.length ? data.verified.map((r) => recipeRow(r, [act('Remove badge', 'gold', () => api('POST', `/api/recipes/${r.id}/verify`, { verified: false }))])) : h('div', { class: 'empty' }, 'No verified recipes yet.')];
+  } else if (tab === 'comments') {
+    body = data.pendingComments.length ? data.pendingComments.map((c) => h('div', { class: 'item' },
+      avatar(c.author, 'md'),
+      h('div', { class: 'grow' }, h('div', { style: 'font-weight:800' }, `@${c.author.username}`), h('div', {}, c.body),
+        h('div', { class: 'hint' }, `⚠️ ${(c.modReasons || []).join(' ')} · `, h('a', { href: `#/r/${c.recipeId}` }, 'See recipe'))),
+      [act('Approve', 'primary', () => api('POST', `/api/comments/${c.id}/approve`, {})), act('Delete', 'danger', () => api('DELETE', `/api/comments/${c.id}`, {}))]))
+      : h('div', { class: 'empty' }, 'No comments waiting. 🎉');
   } else if (tab === 'removed') {
     body = data.removed.length ? data.removed.map((r) => recipeRow(r, [act('Restore', '', () => api('POST', `/api/recipes/${r.id}/restore`, {}))])) : h('div', { class: 'empty' }, 'No recipes have been taken down.');
   } else {
@@ -539,6 +649,14 @@ async function route() {
     app.replaceChildren(h('div', { class: 'form-page' }, errorBox(err), h('a', { class: 'btn', href: '#/' }, 'Back to recipes')));
   }
 }
+
+// "By using this site you agree…" note in the corner, fades out after 5 seconds.
+(function legalNotice() {
+  const el = document.getElementById('legal-notice');
+  if (!el) return;
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 700); }, 5000);
+})();
 
 (async function start() {
   const [meta, me] = await Promise.all([api('GET', '/api/meta'), api('GET', '/api/me')]);
