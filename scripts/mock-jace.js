@@ -66,5 +66,10 @@ createServer(async (req, res) => {
     return json(res, 200, { enabled: true, blocked_terms: ['mockbadword'], max_links: 2 });
   }
 
+  if (url.pathname === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end('<!doctype html><title>Mock Jace</title><body style="font-family:sans-serif;padding:40px;background:#111317;color:#e6e8eb"><h1 style="color:#3ddc84">Mock Jace is running</h1><p>This only pretends to be Jace for sign-in. Open the app instead: <a style="color:#3ddc84" href="http://localhost:3000">http://localhost:3000</a> (start it with <code>npm run dev</code>).</p></body>');
+  }
+
   json(res, 404, { error: 'not_found' });
 }).listen(PORT, () => console.log(`Mock Jace on http://localhost:${PORT}`));
