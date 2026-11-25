@@ -134,7 +134,7 @@ function recipeCard(r) {
         r.verified ? verifiedBadge() : null,
         h('span', { class: 'tag' }, r.category),
         r.aiAssisted ? h('span', { class: 'tag ai-tag', title: 'Made with AI help' }, '✨ AI') : null,
-        myAllergyHits(r).length ? h('span', { class: 'tag allergy-tag', title: 'Contains something on your allergy list' }, `⚠️ ${myAllergyHits(r).map((a) => ALLERGY_NAMES[a]).join(', ')}`) : null,
+        myAllergyHits(r).length ? h('span', { class: 'tag allergy-tag', title: 'Contains something on your allergy list' }, `⚠️ ${myAllergyHits(r).map(allergyName).join(', ')}`) : null,
         r.status !== 'published' ? h('span', { class: `status-pill ${r.status}` }, r.status === 'pending' ? 'In review' : 'Taken down') : null),
       h('h3', { class: 'card-title' }, r.title),
       r.description ? h('div', { class: 'muted', style: 'font-size:.92rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden' }, r.description) : null,
@@ -145,7 +145,9 @@ function recipeCard(r) {
           r.prepTime ? h('span', {}, `⏱ ${r.prepTime} min`) : null))));
 }
 const ALLERGY_NAMES = { peanut: 'peanuts', 'tree nuts': 'tree nuts', milk: 'dairy', eggs: 'eggs', wheat: 'wheat', soy: 'soy', fish: 'fish', shellfish: 'shellfish', sesame: 'sesame' };
-const myAllergyHits = (r) => (state.me && state.me.allergies ? (r.allergens || []).filter((a) => state.me.allergies.includes(a)) : []);
+const myAllergyHits = (r) => (state.me ? r.allergyHits || [] : []);
+const allergyName = (a) => ALLERGY_NAMES[a] || a;
+const hasMyAllergies = () => Boolean(state.me && ((state.me.allergies || []).length || (state.me.customAllergies || []).length));
 const starText = (n) => '★★★★★'.slice(0, Math.round(n)) + '☆☆☆☆☆'.slice(0, 5 - Math.round(n));
 const grid = (list, emptyText) => list.length ? h('div', { class: 'grid' }, list.map(recipeCard)) : h('div', { class: 'empty' }, emptyText);
 
@@ -203,7 +205,7 @@ async function pageBrowse(params) {
     h('select', { onchange: (e) => set(key, e.target.value) }, options.map(([v, text]) => h('option', { value: v, selected: (p[key] || '') === v }, text))));
   const free = (p.free || '').split(',').filter(Boolean);
   const toggleFree = (a) => set('free', (free.includes(a) ? free.filter((x) => x !== a) : [...free, a]).join(','));
-  const activeCount = ['category', 'verified', 'maxTime', 'ai', 'free', 'q'].filter((k) => p[k]).length;
+  const activeCount = ['category', 'verified', 'maxTime', 'ai', 'free', 'q', 'hideMine'].filter((k) => p[k]).length;
 
   let title = 'All recipes';
   if (p.verified === 'only') title = 'Jace Verified recipes';
@@ -243,8 +245,8 @@ async function pageBrowse(params) {
         select('ai', 'AI', [['', 'Any'], ['none', 'Not made with AI'], ['only', 'Made with AI help']])),
       h('div', { class: 'chips allergen-chips', role: 'group', 'aria-label': 'Allergy filters' },
         h('span', { class: 'muted', style: 'font-weight:700;align-self:center' }, 'Allergies:'),
-        state.me && state.me.allergies && state.me.allergies.length
-          ? h('button', { class: 'chip my-allergies', onclick: () => set('free', [...new Set([...free, ...state.me.allergies])].join(',')) }, '⚠️ Hide my allergies')
+        hasMyAllergies()
+          ? h('button', { class: `chip my-allergies${p.hideMine === '1' ? ' on' : ''}`, 'aria-pressed': String(p.hideMine === '1'), onclick: () => set('hideMine', p.hideMine === '1' ? '' : '1') }, p.hideMine === '1' ? '✓ Hiding my allergies' : '⚠️ Hide my allergies')
           : state.me ? h('a', { class: 'chip', href: '#/settings' }, '+ Save my allergies') : null,
         state.allergens.map((a) => h('button', { class: `chip${free.includes(a) ? ' on' : ''}`, 'aria-pressed': String(free.includes(a)), onclick: () => toggleFree(a) }, ALLERGEN_LABELS[a] || `${a}-free`))),
       h('p', { class: 'hint' }, 'Allergy filters use the ingredients list. Always read the ingredients yourself if someone has a serious allergy.'),
@@ -315,7 +317,7 @@ async function pageRecipe(id) {
   const hits = myAllergyHits(r);
   if (hits.length) {
     notices.unshift(h('div', { class: 'notice allergy', role: 'alert' }, h('strong', {}, '⚠️ Allergy warning: '),
-      `this recipe contains ${hits.map((a) => ALLERGY_NAMES[a]).join(', ')}, which ${hits.length === 1 ? 'is' : 'are'} on your allergy list.`,
+      `this recipe contains ${hits.map(allergyName).join(', ')}, which ${hits.length === 1 ? 'is' : 'are'} on your allergy list.`,
       h('div', { class: 'hint', style: 'margin-top:4px' }, 'Found from the ingredients list. Always check labels too.')));
   }
 
@@ -520,13 +522,29 @@ async function pageSettings() {
   const bio = h('textarea', { maxlength: 300, style: 'min-height:80px', placeholder: 'Mom of 3, loves quick dinners…' }, me.bio || '');
   const msg = h('div');
   const allergyBoxes = state.allergens.map((a) => h('input', { type: 'checkbox', value: a, checked: (me.allergies || []).includes(a) }));
+  let custom = [...(me.customAllergies || [])];
+  const customList = h('div', { class: 'chips', style: 'flex-wrap:wrap;overflow:visible;margin-top:8px' });
+  const drawCustom = () => customList.replaceChildren(...custom.map((t) => h('span', { class: 'chip on custom-allergy' }, t,
+    h('button', { type: 'button', class: 'chip-x', 'aria-label': `Remove ${t}`, onclick: () => { custom = custom.filter((x) => x !== t); drawCustom(); } }, '×'))));
+  drawCustom();
+  const customInput = h('input', { type: 'text', maxlength: 40, placeholder: 'e.g. strawberries, mustard, kiwi' });
+  const addCustom = () => {
+    const t = customInput.value.trim().toLowerCase();
+    if (t.length < 2) return;
+    if (!custom.includes(t)) custom.push(t);
+    customInput.value = ''; drawCustom(); customInput.focus();
+  };
+  customInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } });
+  const emailBoxes = Object.entries(state.emailTypes || {})
+    .filter(([k]) => k !== 'admin_review' || isAdmin())
+    .map(([k, label]) => [k, label, h('input', { type: 'checkbox', checked: (me.emailPrefs || {})[k] !== false })]);
 
   app.replaceChildren(h('div', { class: 'form-page' },
     h('h1', {}, 'Your Jace Recipes profile'),
     h('form', { class: 'panel', onsubmit: async (e) => {
       e.preventDefault(); msg.replaceChildren();
       try {
-        state.me = (await api('PATCH', '/api/me', { displayName: name.value, bio: bio.value, avatar: avatarData, allergies: allergyBoxes.filter((b) => b.checked).map((b) => b.value) })).user;
+        state.me = (await api('PATCH', '/api/me', { displayName: name.value, bio: bio.value, avatar: avatarData, allergies: allergyBoxes.filter((b) => b.checked).map((b) => b.value), customAllergies: custom, emailPrefs: Object.fromEntries(emailBoxes.map(([k, , b]) => [k, b.checked])) })).user;
         renderNav(); toast('Profile saved'); go(`#/u/${me.username}`);
       } catch (err) { msg.replaceChildren(errorBox(err)); }
     } },
@@ -542,6 +560,12 @@ async function pageSettings() {
       h('label', {}, '⚠️ Allergies in your family'),
       h('div', { class: 'hint', style: 'margin-bottom:8px' }, 'Recipes with these get a warning just for you. Only you can see this list.'),
       h('div', { class: 'allergy-grid' }, allergyBoxes.map((b) => h('label', { class: 'check', style: 'margin:0' }, b, ALLERGEN_LABELS[b.value].replace('-free', '')))),
+      h('label', {}, 'Other allergies ', h('span', { class: 'hint' }, '(type your own)')),
+      h('div', { class: 'add-row', style: 'margin:0' }, customInput, h('button', { class: 'btn', type: 'button', onclick: addCustom }, 'Add')),
+      customList,
+      h('label', {}, '✉️ Emails'),
+      h('div', { class: 'hint', style: 'margin-bottom:8px' }, 'Sent by Jace to the email on your Jace account. You can also turn off all app emails on Jace (Manage account → Emails).'),
+      h('div', { class: 'email-prefs' }, emailBoxes.map(([, label, b]) => h('label', { class: 'check', style: 'margin:0' }, b, label))),
       msg,
       h('div', { class: 'actions', style: 'margin-top:20px' }, h('button', { class: 'btn primary' }, 'Save'), h('a', { class: 'btn', href: `#/u/${me.username}` }, 'Cancel')))));
 }
@@ -660,7 +684,7 @@ async function route() {
 
 (async function start() {
   const [meta, me] = await Promise.all([api('GET', '/api/meta'), api('GET', '/api/me')]);
-  state.categories = meta.categories; state.admin = meta.admin; state.me = me.user; state.ai = meta.ai; state.allergens = meta.allergens || [];
+  state.categories = meta.categories; state.admin = meta.admin; state.me = me.user; state.ai = meta.ai; state.allergens = meta.allergens || []; state.emailTypes = meta.emailTypes || {};
   renderNav();
   window.addEventListener('hashchange', route);
   route();

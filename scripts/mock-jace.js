@@ -17,6 +17,7 @@ const ACCOUNTS = {
   bannedbob: { sub: 'u-bannedbob', username: 'bannedbob', display_name: 'Banned Bob', picture: null, banned: true, muted: false },
 };
 const codes = new Map();
+const emails = [];
 const tokens = new Map();
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -61,6 +62,18 @@ createServer(async (req, res) => {
     if (!account) return json(res, 401, { error: 'invalid_token' });
     return json(res, 200, { ...account, name: account.display_name });
   }
+
+  // Jace's app email API. GET /_emails shows what was "sent" (newest last).
+  if (url.pathname === '/api/oauth/email' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req) || '{}');
+    const ok = (req.headers.authorization || '').startsWith('Basic ');
+    if (!ok) return json(res, 401, { error: 'invalid_client' });
+    if (!body.user_id || !body.subject || !body.message) return json(res, 400, { error: 'invalid_request' });
+    emails.push({ to: body.user_id, subject: body.subject, heading: body.heading, message: body.message, button_url: body.button_url, at: Date.now() });
+    console.log(`  ✉️  to ${body.user_id}: ${body.subject}`);
+    return json(res, 200, { sent: true });
+  }
+  if (url.pathname === '/_emails') return json(res, 200, { emails });
 
   if (url.pathname === '/api/oauth/automod') {
     return json(res, 200, { enabled: true, blocked_terms: ['mockbadword'], max_links: 2 });

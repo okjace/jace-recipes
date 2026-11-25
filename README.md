@@ -10,7 +10,8 @@ Recipes made by parents, for families. Part of [Jace](https://jaceo.vercel.app).
 - **Make a recipe with AI** using free OpenRouter models. The AI writes a draft the parent checks and edits; it's moderated before and after, and published recipes show a "Made with AI help" tag.
 - **Browse with filters:** Jace Verified or community, category, time, allergy-free (peanut, nuts, dairy, egg, wheat, soy, fish, shellfish, sesame), made with AI or not, sorted newest, quickest or A to Z, with "Load more". The home page has "View all" links for verified and community recipes.
 - **Ratings and comments:** 1 to 5 stars (not on your own recipe) and comments, both auto moderated. Comments with links or unkind words wait for @okjace. Browse can sort by top rated.
-- **Allergy warnings:** people save their family's allergies in Settings (private). Recipes containing them get a warning on the card and a big alert on the recipe page, and Browse has a "Hide my allergies" button.
+- **Emails through Jace:** welcome, new comments on your recipe, recipe approved / Jace Verified / taken down, verifier added, and (for @okjace) things waiting for review. Sent by Jace's app email API (`POST /api/oauth/email`) in Jace's template with Jace Recipes' colors ([`lib/email.js`](lib/email.js)). Each kind can be turned off in Settings, and Jace lets people turn off all app emails. Needs Jace Recipes registered by the Jace site owner (an official app).
+- **Allergy warnings:** people save their family's allergies in Settings (private), including their own custom ones like "strawberries" or "mustard". Recipes containing them get a warning on the card and a big alert on the recipe page, and Browse has a "Hide my allergies" button.
 - **Auto spelling and grammar fixes** when a recipe is published (can be turned off per recipe). The AI proofreads; any line where a number or amount changed is thrown away. Without the AI, a built-in fixer handles common misspellings, capitals and full stops ([`lib/polish.js`](lib/polish.js)).
 - Every recipe page shows what **auto moderation** checked, plus its safety notes. Vague or low-effort recipes (like a one-word title with tiny steps) wait for review.
 - Links to the **Jace Terms and Privacy Policy** in the footer, and a note in the corner on each visit that fades after 5 seconds.
@@ -65,7 +66,7 @@ runs the moderation tests and an end-to-end test that signs in through OAuth aga
 | `SESSION_SECRET` | yes | 32+ random characters that encrypt the sign-in cookie. Changing it signs everyone out. |
 | `DATABASE_URL` | yes in production | Neon Postgres connection string. Vercel → Storage → Neon sets it. |
 | `OPENROUTER_API_KEY` | for AI | Free key from [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys). Without it, the AI recipe maker is hidden. Only models ending in `:free` are ever used. |
-| `OPENROUTER_MODEL` | no | Comma-separated `:free` model ids to try in order. Defaults to gpt-oss-120b, Llama 3.3 70B and Gemma 3 27B. |
+| `OPENROUTER_MODEL` | no | Comma-separated `:free` model ids to try in order. By default the app asks OpenRouter which free models exist (every 6 hours) and picks the best few, so it keeps working when models come and go. |
 | `AI_DAILY_LIMIT` | no | AI recipes per person per day (default 20). Failed tries don't count. |
 | `APP_URL` | no | Public URL, used for the redirect URI `<APP_URL>/api/auth/callback`. Defaults to the request's host. |
 | `JACE_URL` | no | Defaults to `https://jaceo.vercel.app`. |

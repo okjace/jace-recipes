@@ -269,3 +269,9 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; }
 .legal-notice.show { opacity: 1; transform: none; }
 .legal-notice a { color: var(--accent); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .legal-notice { transition: opacity .3s; transform: none; } }
+
+/* Custom allergies + email choices */
+.custom-allergy { display: inline-flex; align-items: center; gap: 6px; background: var(--danger-soft); color: var(--danger); border-color: var(--danger); cursor: default; }
+.chip-x { background: none; border: 0; color: inherit; font-size: 1.1rem; line-height: 1; padding: 0 2px; cursor: pointer; }
+.email-prefs { display: flex; flex-direction: column; gap: 8px; }
+.email-prefs input { accent-color: var(--accent); }

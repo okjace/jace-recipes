@@ -236,3 +236,64 @@ test('allergies are saved privately', async () => {
   assert.deepEqual((await dad('GET', '/api/me')).data.user.allergies, ['milk', 'peanut']);
   assert.equal((await client(null)('GET', '/api/users/dadcooks')).data.user.allergies, undefined);
 });
+
+const inbox = async () => (await (await fetch(`${JACE}/_emails`)).json()).emails;
+const settle = () => new Promise((r) => setTimeout(r, 300));
+
+test('emails go through Jace for the right events', async () => {
+  await settle();
+  let mail = await inbox();
+  // Welcome emails on first sign-in (not on later sign-ins).
+  assert.equal(mail.filter((m) => m.to === 'u-momchef' && m.subject === 'Welcome to Jace Recipes').length, 1);
+  const r = (await mom('POST', '/api/recipes', { title: 'Sunny Egg Muffins', ingredients: '6 eggs\n1 cup spinach', steps: 'Whisk the eggs with spinach and pour into a muffin tin.\nBake at 350°F for 20 minutes until set.' })).data.recipe;
+  await dad('POST', `/api/recipes/${r.id}/comments`, { body: 'Great breakfast idea!' });
+  await admin('POST', `/api/recipes/${r.id}/verify`, { verified: true });
+  await admin('POST', `/api/recipes/${r.id}/takedown`, { reason: 'Testing takedown' });
+  await admin('POST', `/api/recipes/${r.id}/restore`, {});
+  const held = (await dad('POST', '/api/recipes', { title: 'Lye pretzels', ingredients: 'food grade lye\nflour', steps: 'Dip the shaped dough in the lye bath, then bake until brown.' })).data.recipe;
+  assert.equal(held.status, 'pending');
+  await settle();
+  mail = await inbox();
+  const toMom = mail.filter((m) => m.to === 'u-momchef').map((m) => m.subject);
+  assert.ok(toMom.some((s) => /New comment on “Sunny Egg Muffins”/.test(s)));
+  assert.ok(toMom.some((s) => /Jace Verified/.test(s)));
+  assert.ok(toMom.some((s) => /was taken down/.test(s)));
+  assert.ok(toMom.some((s) => /is back/.test(s)));
+  assert.ok(mail.some((m) => m.to === 'u-okjace' && /Waiting for review: Lye pretzels/i.test(m.subject)));
+  assert.ok(mail.every((m) => m.button_url === undefined || m.button_url.startsWith('http')));
+});
+
+test('people can turn email types off', async () => {
+  const me = await mom('PATCH', '/api/me', { emailPrefs: { comments: false } });
+  assert.equal(me.data.user.emailPrefs.comments, false);
+  assert.equal(me.data.user.emailPrefs.recipe_updates, true);
+  const r = (await mom('POST', '/api/recipes', { title: 'Quiet Pasta Salad', ingredients: '2 cups pasta\n1 cup peas', steps: 'Cook the pasta, cool it, then stir in the peas and a little olive oil.' })).data.recipe;
+  const before = (await inbox()).length;
+  await dad('POST', `/api/recipes/${r.id}/comments`, { body: 'Yum, will try this!' });
+  await settle();
+  assert.equal((await inbox()).length, before);
+});
+
+test('custom allergies warn and hide', async () => {
+  const r = (await mom('POST', '/api/recipes', { title: 'Strawberry Yogurt Pops', ingredients: '1 cup strawberries\n1 cup yogurt', steps: 'Blend the strawberries with the yogurt, pour into molds and freeze overnight.' })).data.recipe;
+  const me = await dad('PATCH', '/api/me', { allergies: [], customAllergies: ['Strawberry', ' kiwi ', 'x'] });
+  assert.deepEqual(me.data.user.customAllergies, ['strawberry', 'kiwi']);
+  const seen = await dad('GET', `/api/recipes/${r.id}`);
+  assert.deepEqual(seen.data.recipe.allergyHits, ['strawberry']);
+  assert.deepEqual((await mom('GET', `/api/recipes/${r.id}`)).data.recipe.allergyHits, []);
+  const hidden = await dad('GET', '/api/recipes?hideMine=1&limit=48');
+  assert.ok(!hidden.data.recipes.some((x) => x.id === r.id));
+  assert.ok((await dad('GET', '/api/recipes?limit=48')).data.recipes.some((x) => x.id === r.id));
+});
+
+test('AI picks only free, current text models', async () => {
+  const { pickFreeModels } = await import('../lib/ai.js');
+  const picked = pickFreeModels([
+    { id: 'google/gemma-4-31b-it:free', architecture: { output_modalities: ['text'] } },
+    { id: 'openai/gpt-5:paid' },
+    { id: 'liquid/lfm-3-1.7b:free' },
+    { id: 'nvidia/nemotron-3.5-super-vl:free' },
+    { id: 'nvidia/nemotron-3-ultra-550b-a55b:free' },
+  ]);
+  assert.deepEqual(picked, ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-ultra-550b-a55b:free']);
+});
