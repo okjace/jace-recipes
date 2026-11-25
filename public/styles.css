@@ -278,3 +278,14 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; }
 
 .safety .checks li.warn::before { content: "⚠️ "; }
 .safety .checks li.warn { font-weight: 700; }
+
+/* Notifications + making recipes together */
+.bell { position: relative; text-decoration: none; }
+.bell .badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: #fff; font-size: .7rem; font-weight: 800; display: grid; place-items: center; }
+.note.unread { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
+.note-text { text-decoration: none; }
+.note-text:hover { text-decoration: underline; }
+.with-team { margin: -6px 0 12px; font-size: .92rem; }
+.with-team a { font-weight: 700; }
+.notice.invite { background: var(--accent-soft); border: 1px solid var(--accent); }
+details ul, details ol { margin: 4px 0 8px; padding-left: 22px; }

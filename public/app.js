@@ -116,6 +116,8 @@ function renderNav() {
   if (state.me) {
     nav.append(
       state.ai ? h('a', { class: 'link hide-sm', href: '#/ai' }, '✨ AI') : null,
+      h('a', { class: 'icon-btn bell', href: '#/inbox', title: 'Notifications', 'aria-label': state.unread ? `Notifications, ${state.unread} new` : 'Notifications' },
+        h('span', { 'aria-hidden': 'true' }, '🔔'), state.unread ? h('span', { class: 'badge' }, state.unread > 99 ? '99+' : String(state.unread)) : null),
       h('a', { class: 'btn primary small', href: '#/new' }, '+ Add recipe'),
       isAdmin() ? h('a', { class: 'link hide-sm', href: '#/admin' }, 'Admin') : null,
       h('a', { class: 'me', href: `#/u/${state.me.username}`, title: 'Your profile' }, avatar(state.me), h('span', { class: 'name' }, state.me.displayName)),
@@ -270,7 +272,16 @@ async function pageAI() {
     out.replaceChildren(h('div', { class: 'panel ai-loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Cooking up your recipe… this can take up to a minute.'));
     go_.disabled = true;
     try {
-      const { draft, left } = await api('POST', '/api/ai/recipe', { prompt: prompt.value, category: category.value });
+      const ask = () => api('POST', '/api/ai/recipe', { prompt: prompt.value, category: category.value });
+      let result;
+      try { result = await ask(); } catch (err) {
+        if (err.status !== 503 || /isn’t set up/.test(err.message)) throw err;
+        // Free AI models are sometimes busy: wait a moment and try once more before giving up.
+        out.replaceChildren(h('div', { class: 'panel ai-loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'The AI is busy, trying another one…'));
+        await new Promise((r) => setTimeout(r, 4000));
+        result = await ask();
+      }
+      const { draft, left } = result;
       state.aiDraft = draft;
       out.replaceChildren(h('div', { class: 'panel ai-result' },
         h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, h('span', { class: 'tag ai-tag' }, '✨ AI draft'), h('span', { class: 'tag' }, draft.category), draft.prepTime ? h('span', { class: 'tag' }, `⏱ ${draft.prepTime} min`) : null, h('span', { class: 'tag' }, `🍽 Serves ${draft.servings}`)),
@@ -307,6 +318,7 @@ async function pageAI() {
 async function pageRecipe(id) {
   const { recipe: r } = await api('GET', `/api/recipes/${encodeURIComponent(id)}`);
   const mine = state.me && state.me.username === r.author.username;
+  const team = (r.collaborators || []).filter((c) => c.status === 'accepted');
   const notices = [];
   if (r.status === 'pending') notices.push(h('div', { class: 'notice warn' }, h('strong', {}, 'Waiting for review. '), 'Auto-moderation sent this recipe to @okjace before it goes public.', r.modReasons && r.modReasons.length ? h('ul', {}, r.modReasons.map((x) => h('li', {}, x))) : null));
   if (r.status === 'removed') notices.push(h('div', { class: 'notice error' }, h('strong', {}, 'Taken down by @okjace. '), r.takedownReason || ''));
@@ -340,19 +352,109 @@ async function pageRecipe(id) {
         r.visibility === 'unlisted' ? [h('span', { class: 'tag' }, '🔗 Unlisted'), h('button', { class: 'btn small', onclick: async () => { try { await navigator.clipboard.writeText(location.href); toast('Link copied'); } catch { toast(location.href); } } }, 'Copy link')] : null),
       h('h1', {}, r.title),
       h('a', { class: 'byline', href: `#/u/${r.author.username}` }, avatar(r.author, 'md'), h('div', {}, h('div', { style: 'display:flex;align-items:center;gap:6px;font-weight:800' }, r.author.displayName, userCheck(r.author)), h('div', { class: 'muted', style: 'font-size:.88rem' }, `@${r.author.username} · ${timeAgo(r.createdAt)}`))),
+      team.length ? h('div', { class: 'with-team' }, h('span', { class: 'muted' }, '👥 Made with '),
+        team.map((c, i) => [i ? ', ' : '', h('a', { href: `#/u/${c.username}` }, c.displayName)])) : null,
+      r.myInvite ? h('div', { class: 'notice invite' }, h('strong', {}, '👥 You’re invited! '), `${r.author.displayName} invited you to make this recipe together. If you accept, you can edit it with them.`,
+        h('div', { class: 'actions', style: 'margin:10px 0 0' },
+          h('button', { class: 'btn primary small', onclick: () => answerInvite(r.id, 'accept') }, 'Accept'),
+          h('button', { class: 'btn small', onclick: () => answerInvite(r.id, 'decline') }, 'Decline'))) : null,
       r.description ? h('p', {}, r.description) : null,
       h('div', { class: 'facts' }, r.prepTime ? h('span', { class: 'tag' }, `⏱ ${r.prepTime} min`) : null, h('span', { class: 'tag' }, `🍽 Serves ${r.servings}`)),
       ratingBox(r, mine),
       adminBar,
-      (mine || isAdmin()) ? h('div', { class: 'actions' },
+      r.canEdit ? h('div', { class: 'actions' },
         r.status !== 'removed' || isAdmin() ? h('a', { class: 'btn small', href: `#/edit/${r.id}` }, 'Edit') : null,
-        h('button', { class: 'btn danger small', onclick: async () => {
+        r.isOwner ? h('button', { class: 'btn small', onclick: () => document.getElementById('share')?.classList.toggle('hidden') }, '👥 Share') : null,
+        !r.isOwner ? h('button', { class: 'btn small', onclick: async () => {
+          if (!confirm('Stop making this recipe together? You won’t be able to edit it anymore.')) return;
+          await api('DELETE', `/api/recipes/${r.id}/collaborators/${encodeURIComponent(state.me.username)}`); toast('You left the recipe'); route();
+        } }, 'Leave') : null,
+        !r.isOwner ? null : h('button', { class: 'btn danger small', onclick: async () => {
           if (!confirm(`Delete “${r.title}” forever? This can’t be undone.`)) return;
           try { await api('DELETE', `/api/recipes/${r.id}`); toast('Recipe deleted'); go(`#/u/${state.me.username}`); } catch (err) { toast(err.message); }
         } }, 'Delete')) : null,
+      r.isOwner ? sharePanel(r) : null,
       h('div', { class: 'panel' }, h('h2', {}, 'Ingredients'), h('ul', { class: 'ingredients' }, r.ingredients.map((i) => h('li', {}, h('input', { type: 'checkbox', 'aria-label': `Got ${i}` }), h('span', {}, i))))),
       h('div', { class: 'panel' }, h('h2', {}, 'Steps'), h('ol', { class: 'steps' }, r.steps.map((s) => h('li', {}, h('span', {}, s))))),
       commentsBox(r))));
+}
+
+async function answerInvite(recipeId, action) {
+  try {
+    await api('POST', `/api/recipes/${recipeId}/invite`, { action });
+    toast(action === 'accept' ? 'You’re in! You can edit this recipe now.' : 'Invite declined');
+    refreshUnread();
+    if (action === 'accept') go(`#/r/${recipeId}`); else if (location.hash.startsWith('#/r/')) go('#/inbox'); else route();
+  } catch (err) { toast(err.message); }
+}
+
+function sharePanel(r) {
+  const input = h('input', { type: 'text', placeholder: 'Jace username, like momchef', 'aria-label': 'Jace username to invite' });
+  const msg = h('div');
+  const people = (r.collaborators || []).map((c) => h('div', { class: 'item' }, avatar(c, 'md'),
+    h('div', { class: 'grow' }, h('a', { class: 'title', href: `#/u/${c.username}` }, c.displayName), h('div', { class: 'muted', style: 'font-size:.88rem' }, `@${c.username} · ${c.status === 'accepted' ? 'Making it with you' : 'Invite sent'}`)),
+    h('button', { class: 'btn small danger', onclick: async () => {
+      await api('DELETE', `/api/recipes/${r.id}/collaborators/${encodeURIComponent(c.username)}`);
+      toast(c.status === 'accepted' ? `Removed @${c.username}` : 'Invite cancelled'); route();
+    } }, c.status === 'accepted' ? 'Remove' : 'Cancel invite')));
+  return h('div', { class: 'panel hidden', id: 'share' },
+    h('h2', {}, '👥 Make it together'),
+    h('p', { class: 'muted', style: 'margin-top:0' }, 'Invite people by their Jace username. They get a notification, and once they accept they can edit this recipe with you.'),
+    h('form', { class: 'add-row', onsubmit: async (e) => {
+      e.preventDefault(); msg.replaceChildren();
+      try {
+        await api('POST', `/api/recipes/${r.id}/collaborators`, { username: input.value });
+        toast(`Invite sent to @${input.value.replace(/^@/, '')}`); await route();
+        document.getElementById('share')?.classList.remove('hidden');
+      } catch (err) { msg.replaceChildren(errorBox(err)); }
+    } }, input, h('button', { class: 'btn primary' }, 'Invite')),
+    msg,
+    people.length ? h('div', { class: 'list', style: 'padding:0' }, people) : null);
+}
+
+const NOTE_TEXT = {
+  invite: (n) => [h('strong', {}, n.actor?.displayName || 'Someone'), ' invited you to make ', h('strong', {}, n.recipeTitle || n.data.title || 'a recipe'), ' together'],
+  invite_accepted: (n) => [h('strong', {}, n.actor?.displayName || 'Someone'), ' accepted your invite to ', h('strong', {}, n.recipeTitle || 'your recipe')],
+  comment: (n) => [h('strong', {}, n.actor?.displayName || 'Someone'), ' commented on ', h('strong', {}, n.recipeTitle || 'your recipe'), n.data.text ? `: “${n.data.text}”` : ''],
+  approved: (n) => ['Your recipe ', h('strong', {}, n.recipeTitle || ''), ' was approved and is live'],
+  restored: (n) => ['Your recipe ', h('strong', {}, n.recipeTitle || ''), ' was put back'],
+  verified: (n) => ['✓ Your recipe ', h('strong', {}, n.recipeTitle || ''), ' is now Jace Verified!'],
+  taken_down: (n) => ['Your recipe ', h('strong', {}, n.recipeTitle || ''), ' was taken down', n.data.reason ? `: ${n.data.reason}` : ''],
+  role: () => ['You can now post ', h('strong', {}, 'Jace Verified'), ' recipes'],
+  review: (n) => [`${n.data.what || 'Something'} is waiting for review: `, h('strong', {}, n.data.title || n.recipeTitle || '')],
+  blocked: (n) => ['Auto moderation blocked ', h('strong', {}, n.data.title || 'a recipe'), n.actor ? [' by ', h('strong', {}, `@${n.actor.username}`)] : ''],
+};
+
+async function pageInbox() {
+  if (!state.me) return go('#/signin');
+  const { items } = await api('GET', '/api/inbox');
+  const draw = (list) => list.length ? list.map((n) => {
+    const href = n.type === 'blocked' ? '#/admin/blocked' : n.type === 'role' ? '#/new' : n.recipeId ? `#/r/${n.recipeId}` : '#/';
+    return h('div', { class: `item note${n.read ? '' : ' unread'}` },
+      n.actor ? avatar(n.actor, 'md') : h('span', { class: 'avatar md', 'aria-hidden': 'true' }, n.type === 'verified' ? '✓' : '🍽'),
+      h('div', { class: 'grow' },
+        h('a', { href, class: 'note-text' }, ...(NOTE_TEXT[n.type] || (() => ['Notification']))(n)),
+        h('div', { class: 'muted', style: 'font-size:.85rem' }, timeAgo(n.createdAt)),
+        n.type === 'invite' ? h('div', { class: 'actions', style: 'margin:8px 0 0' },
+          h('button', { class: 'btn primary small', onclick: () => answerInvite(n.recipeId, 'accept') }, 'Accept'),
+          h('button', { class: 'btn small', onclick: () => answerInvite(n.recipeId, 'decline') }, 'Decline')) : null),
+      n.type !== 'invite' ? h('button', { class: 'chip-x', title: 'Remove', 'aria-label': 'Remove notification', onclick: async () => {
+        const res = await api('PATCH', '/api/inbox', { delete: n.id }); list = res.items; box.replaceChildren(...draw(list));
+      } }, '×') : null);
+  }) : [h('div', { class: 'empty' }, 'No notifications yet. Invites, comments and news about your recipes show up here.')];
+  let list = items;
+  const box = h('div', { class: 'list' }, ...draw(list));
+  app.replaceChildren(h('div', { class: 'form-page' }, h('h1', {}, '🔔 Notifications'), box));
+  // Opening the inbox marks everything read.
+  if (items.some((n) => !n.read)) { await api('PATCH', '/api/inbox', { all: true }); state.unread = 0; renderNav(); }
+}
+
+async function refreshUnread() {
+  if (!state.me) return;
+  try {
+    const { unread } = await api('GET', '/api/inbox?count=1');
+    if (unread !== state.unread) { state.unread = unread; renderNav(); }
+  } catch { /* offline */ }
 }
 
 function moderationPanel(r) {
@@ -464,9 +566,11 @@ async function pageEditor(id, params = new URLSearchParams()) {
   const msg = h('div');
   const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, id ? 'Save changes' : 'Publish recipe');
 
+  let overrideNext = false;
   const onsubmit = async (e) => {
     e.preventDefault(); msg.replaceChildren(); saveBtn.disabled = true;
     const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted: Boolean(fromAI), autoFix: f.autoFix.checked, visibility: f.visibility.value };
+    if (overrideNext) body.bypassModeration = true;
     if (canVerify()) body.verified = f.verified.checked;
     try {
       saveBtn.textContent = f.autoFix.checked ? 'Checking spelling…' : 'Saving…';
@@ -475,7 +579,13 @@ async function pageEditor(id, params = new URLSearchParams()) {
       if (fromAI) state.aiDraft = null;
       toast(recipe.status === 'pending' ? 'Sent to review before it goes public' : 'Recipe published!');
       go(`#/r/${recipe.id}`);
-    } catch (err) { msg.replaceChildren(errorBox(err)); msg.scrollIntoView({ behavior: 'smooth', block: 'center' }); } finally { saveBtn.disabled = false; saveBtn.textContent = id ? 'Save changes' : 'Publish recipe'; }
+    } catch (err) {
+      overrideNext = false;
+      msg.replaceChildren(errorBox(err),
+        err.data && err.data.canOverride ? h('div', { class: 'notice warn' }, h('strong', {}, 'Admin: '), 'you can publish it anyway if auto moderation got it wrong. The reasons stay on record.',
+          h('div', { class: 'actions', style: 'margin:8px 0 0' }, h('button', { class: 'btn danger small', type: 'button', onclick: () => { overrideNext = true; saveBtn.click(); } }, 'Publish anyway (admin)'))) : null);
+      msg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } finally { saveBtn.disabled = false; saveBtn.textContent = id ? 'Save changes' : 'Publish recipe'; }
   };
 
   app.replaceChildren(h('div', { class: 'form-page' },
@@ -497,8 +607,9 @@ async function pageEditor(id, params = new URLSearchParams()) {
       h('div', { class: 'photo-pick' }, preview,
         h('button', { class: 'btn small', type: 'button', onclick: async () => { const d = await pickImage(1000, 0.8); if (d) { image = d; drawPreview(); } } }, 'Choose photo'),
         h('button', { class: 'btn small', type: 'button', onclick: () => { image = null; drawPreview(); } }, 'Remove')),
-      h('label', {}, 'Who can see it'), f.visibility,
-      h('div', { class: 'hint', style: 'margin-top:4px' }, 'Unlisted recipes don’t show in lists or search. Private recipes are only for you (Jace Recipes admins can still see them to keep the site safe).'),
+      !id || r.isOwner ? [h('label', {}, 'Who can see it'), f.visibility,
+        h('div', { class: 'hint', style: 'margin-top:4px' }, 'Unlisted recipes don’t show in lists or search. Private recipes are only for you and people you share them with (Jace Recipes admins can still see them to keep the site safe).')]
+        : h('p', { class: 'hint' }, `You’re editing ${r.author.displayName}’s recipe together. Only they can change who can see it.`),
       h('label', { class: 'check' }, f.autoFix, '✨ Fix my spelling and grammar automatically', h('span', { class: 'hint' }, ' (amounts never change)')),
       canVerify() ? h('label', { class: 'check' }, f.verified, verifiedBadge(), 'Post as a Jace Verified recipe') : null,
       msg,
@@ -600,7 +711,7 @@ function pageSignIn(params) {
 async function pageAdmin(tab = 'queue') {
   if (!isAdmin()) return go('#/');
   const data = await api('GET', '/api/admin/overview');
-  const tabs = [['queue', `Review queue (${data.pending.length})`], ['verified', `Verified recipes (${data.verified.length})`], ['people', 'People & verifiers'], ['removed', `Taken down (${data.removed.length})`], ['comments', `Comments to check (${data.pendingComments.length})`]];
+  const tabs = [['queue', `Review queue (${data.pending.length})`], ['verified', `Verified recipes (${data.verified.length})`], ['people', 'People & verifiers'], ['removed', `Taken down (${data.removed.length})`], ['comments', `Comments to check (${data.pendingComments.length})`], ['blocked', `Blocked by auto moderation (${data.blocked.length})`]];
   const reload = () => pageAdmin(tab);
 
   const recipeRow = (r, buttons) => h('div', { class: 'item' },
@@ -620,6 +731,18 @@ async function pageAdmin(tab = 'queue') {
   } else if (tab === 'verified') {
     body = [h('p', { class: 'muted' }, 'Open any recipe and press “Make Jace Verified” to add it here.'),
       data.verified.length ? data.verified.map((r) => recipeRow(r, [act('Remove badge', 'gold', () => api('POST', `/api/recipes/${r.id}/verify`, { verified: false }))])) : h('div', { class: 'empty' }, 'No verified recipes yet.')];
+  } else if (tab === 'blocked') {
+    body = [h('p', { class: 'muted' }, 'Recipes auto moderation stopped. If it got one wrong, publish it anyway; the reasons stay on record.'),
+      data.blocked.length ? data.blocked.map((b) => h('div', { class: 'item', style: 'align-items:flex-start' },
+        avatar(b.author, 'md'),
+        h('div', { class: 'grow' },
+          h('div', { style: 'font-weight:800' }, b.recipe.title || '(no title)', h('span', { class: 'muted', style: 'font-weight:400' }, ` by @${b.author.username} · ${timeAgo(b.createdAt)}${b.recipeId ? ' · an edit' : ''}`)),
+          h('div', { style: 'color:var(--danger);font-size:.9rem;margin:4px 0' }, '⛔ ', (b.reasons || []).join(' ')),
+          h('details', {}, h('summary', { class: 'hint', style: 'cursor:pointer' }, 'See the recipe'),
+            h('div', { class: 'hint' }, 'Ingredients:'), h('ul', {}, (b.recipe.ingredients || []).map((i) => h('li', {}, i))),
+            h('div', { class: 'hint' }, 'Steps:'), h('ol', {}, (b.recipe.steps || []).map((x) => h('li', {}, x))))),
+        [act('Publish anyway', 'danger', () => api('POST', `/api/admin/blocked/${b.id}`, { action: 'publish' })), act('Dismiss', '', () => api('POST', `/api/admin/blocked/${b.id}`, { action: 'dismiss' }))]))
+        : h('div', { class: 'empty' }, 'Nothing blocked. 🎉')];
   } else if (tab === 'comments') {
     body = data.pendingComments.length ? data.pendingComments.map((c) => h('div', { class: 'item' },
       avatar(c.author, 'md'),
@@ -665,6 +788,7 @@ async function route() {
   const parts = pathPart.split('/').filter(Boolean);
   const params = new URLSearchParams(queryPart || '');
   window.scrollTo(0, 0);
+  if (parts[0] !== 'inbox') refreshUnread();
   try {
     switch (parts[0]) {
       case undefined: await pageHome(params); break;
@@ -675,6 +799,7 @@ async function route() {
       case 'edit': await pageEditor(parts[1]); break;
       case 'u': await pageProfile(parts[1]); break;
       case 'settings': await pageSettings(); break;
+      case 'inbox': await pageInbox(); break;
       case 'signin': case 'login': case 'register': pageSignIn(params); break;
       case 'signin-error': pageSignIn(params); break;
       case 'admin': await pageAdmin(parts[1]); break;
@@ -696,7 +821,9 @@ async function route() {
 (async function start() {
   const [meta, me] = await Promise.all([api('GET', '/api/meta'), api('GET', '/api/me')]);
   state.categories = meta.categories; state.admin = meta.admin; state.me = me.user; state.ai = meta.ai; state.allergens = meta.allergens || []; state.emailTypes = meta.emailTypes || {};
+  if (state.me) { try { state.unread = (await api('GET', '/api/inbox?count=1')).unread; } catch { state.unread = 0; } }
   renderNav();
+  setInterval(refreshUnread, 60_000);
   window.addEventListener('hashchange', route);
   route();
 })();

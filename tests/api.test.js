@@ -337,3 +337,68 @@ test('private and unlisted recipes', async () => {
   // Making it public later sends it to review.
   assert.equal((await gran('PUT', `/api/recipes/${vague.id}`, { title: 'eat', visibility: 'public', ingredients: '2 nuts', steps: 'mix' })).data.recipe.status, 'pending');
 });
+
+test('blocked recipes go to the admin, who can publish them anyway', async () => {
+  const gran = client((await signIn('grandma')).cookie);
+  const blocked = await gran('POST', '/api/recipes', { title: 'Bleach Lemonade', ingredients: '1 cup bleach\n2 lemons', steps: 'Mix it all together in a pitcher and serve cold to everyone.' });
+  assert.equal(blocked.status, 422);
+  assert.equal(blocked.data.canOverride, false);
+  const overview = (await admin('GET', '/api/admin/overview')).data;
+  const b = overview.blocked.find((x) => x.recipe.title === 'Bleach Lemonade');
+  assert.ok(b && b.reasons.length && b.author.username === 'grandma');
+  const inboxAdmin = (await admin('GET', '/api/inbox')).data;
+  assert.ok(inboxAdmin.items.some((n) => n.type === 'blocked'));
+  assert.equal((await gran('POST', `/api/admin/blocked/${b.id}`, { action: 'publish' })).status, 403);
+  const pub = await admin('POST', `/api/admin/blocked/${b.id}`, { action: 'publish' });
+  assert.equal(pub.data.recipe.status, 'published');
+  assert.ok(pub.data.recipe.modReasons[0].startsWith('Published by @okjace'));
+  assert.equal((await admin('POST', `/api/admin/blocked/${b.id}`, { action: 'publish' })).status, 404); // already handled
+  assert.ok((await gran('GET', '/api/inbox')).data.items.some((n) => n.type === 'approved'));
+  // The admin's own blocked recipe offers an override.
+  const own = await admin('POST', '/api/recipes', { title: 'Admin Test Drink', ingredients: '1 cup bleach', steps: 'This is only a test of the override, please ignore it.' });
+  assert.equal(own.data.canOverride, true);
+  const forced = await admin('POST', '/api/recipes', { title: 'Admin Test Drink', ingredients: '1 cup bleach', steps: 'This is only a test of the override, please ignore it.', bypassModeration: true });
+  assert.equal(forced.data.recipe.status, 'published');
+  assert.equal((await gran('POST', '/api/recipes', { title: 'Sneaky Drink', ingredients: '1 cup bleach', steps: 'Trying to skip moderation without being the admin here.', bypassModeration: true })).status, 422);
+});
+
+test('making recipes together with invites and notifications', async () => {
+  const gran = client((await signIn('grandma')).cookie);
+  const r = (await gran('POST', '/api/recipes', { title: 'Family Lasagna', visibility: 'private', ingredients: '12 lasagna noodles\n2 cups ricotta\n3 cups tomato sauce', steps: 'Layer noodles, ricotta and sauce in a dish three times over.\nBake at 375°F for 45 minutes until bubbly.' })).data.recipe;
+  assert.equal((await gran('POST', `/api/recipes/${r.id}/collaborators`, { username: 'nobody_here' })).status, 404);
+  assert.equal((await dad('POST', `/api/recipes/${r.id}/collaborators`, { username: 'momchef' })).status, 404); // dad can't even see it
+  const inv = await gran('POST', `/api/recipes/${r.id}/collaborators`, { username: '@momchef' });
+  assert.equal(inv.status, 200);
+  assert.equal(inv.data.recipe.collaborators[0].status, 'invited');
+  assert.equal((await gran('POST', `/api/recipes/${r.id}/collaborators`, { username: 'momchef' })).status, 409);
+  // Mom sees the invite in her notifications and can open the private recipe.
+  const unread = (await mom('GET', '/api/inbox?count=1')).data.unread;
+  assert.ok(unread >= 1);
+  const note = (await mom('GET', '/api/inbox')).data.items.find((n) => n.type === 'invite' && n.recipeId === r.id);
+  assert.ok(note && note.actor.username === 'grandma');
+  const seen = (await mom('GET', `/api/recipes/${r.id}`)).data.recipe;
+  assert.equal(seen.myInvite, true);
+  assert.equal(seen.canEdit, false);
+  assert.equal((await mom('PUT', `/api/recipes/${r.id}`, { title: 'Hacked', ingredients: 'x\ny', steps: 'Trying to edit before accepting the invite to this recipe.' })).status, 403);
+  // Accept: now mom can edit, but not change who can see it or delete it.
+  const acc = await mom('POST', `/api/recipes/${r.id}/invite`, { action: 'accept' });
+  assert.equal(acc.data.recipe.canEdit, true);
+  assert.ok(!(await mom('GET', '/api/inbox')).data.items.some((n) => n.type === 'invite' && n.recipeId === r.id)); // invite cleared
+  const ed = await mom('PUT', `/api/recipes/${r.id}`, { title: 'Family Lasagna', visibility: 'public', ingredients: '12 lasagna noodles\n2 cups ricotta\n3 cups tomato sauce\n1 cup mozzarella', steps: 'Layer noodles, ricotta and sauce in a dish three times over.\nBake at 375°F for 45 minutes until bubbly.' });
+  assert.equal(ed.status, 200);
+  assert.equal(ed.data.recipe.visibility, 'private'); // only the owner decides
+  assert.equal(ed.data.recipe.ingredients.length, 4);
+  assert.equal((await mom('DELETE', `/api/recipes/${r.id}`, {})).status, 403);
+  assert.ok((await gran('GET', '/api/inbox')).data.items.some((n) => n.type === 'invite_accepted'));
+  assert.ok((await mom('GET', '/api/users/grandma')).data.recipes.length >= 0);
+  assert.ok((await mom('GET', '/api/users/momchef')).data.recipes.some((x) => x.id === r.id)); // shows on co-author's profile
+  // Leave, then owner removes / re-invites and the invite can be declined.
+  await mom('DELETE', `/api/recipes/${r.id}/collaborators/momchef`, {});
+  assert.equal((await mom('GET', `/api/recipes/${r.id}`)).status, 404);
+  await gran('POST', `/api/recipes/${r.id}/collaborators`, { username: 'momchef' });
+  await mom('POST', `/api/recipes/${r.id}/invite`, { action: 'decline' });
+  assert.equal((await mom('GET', `/api/recipes/${r.id}`)).status, 404);
+  // Marking read.
+  await mom('PATCH', '/api/inbox', { all: true });
+  assert.equal((await mom('GET', '/api/inbox?count=1')).data.unread, 0);
+});
