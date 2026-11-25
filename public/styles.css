@@ -275,3 +275,6 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; }
 .chip-x { background: none; border: 0; color: inherit; font-size: 1.1rem; line-height: 1; padding: 0 2px; cursor: pointer; }
 .email-prefs { display: flex; flex-direction: column; gap: 8px; }
 .email-prefs input { accent-color: var(--accent); }
+
+.safety .checks li.warn::before { content: "⚠️ "; }
+.safety .checks li.warn { font-weight: 700; }

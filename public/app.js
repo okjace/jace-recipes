@@ -134,6 +134,7 @@ function recipeCard(r) {
         r.verified ? verifiedBadge() : null,
         h('span', { class: 'tag' }, r.category),
         r.aiAssisted ? h('span', { class: 'tag ai-tag', title: 'Made with AI help' }, '✨ AI') : null,
+        r.visibility === 'private' ? h('span', { class: 'tag', title: 'Only you can see this' }, '🔒 Private') : r.visibility === 'unlisted' ? h('span', { class: 'tag', title: 'Anyone with the link can see this' }, '🔗 Unlisted') : null,
         myAllergyHits(r).length ? h('span', { class: 'tag allergy-tag', title: 'Contains something on your allergy list' }, `⚠️ ${myAllergyHits(r).map(allergyName).join(', ')}`) : null,
         r.status !== 'published' ? h('span', { class: `status-pill ${r.status}` }, r.status === 'pending' ? 'In review' : 'Taken down') : null),
       h('h3', { class: 'card-title' }, r.title),
@@ -311,7 +312,7 @@ async function pageRecipe(id) {
   if (r.status === 'removed') notices.push(h('div', { class: 'notice error' }, h('strong', {}, 'Taken down by @okjace. '), r.takedownReason || ''));
   if (r.status === 'published' && r.modReasons && r.modReasons.length) {
     notices.push(h('div', { class: 'notice warn' }, h('strong', {}, '🛡️ Auto moderation flagged this. '),
-      isAdmin() && mine ? 'It went live because you’re the admin. Other people’s recipes like this wait for your review.' : 'It was approved by @okjace.',
+      r.visibility === 'private' ? 'It’s private, so only you can see it.' : 'It was approved by @okjace.',
       h('ul', {}, r.modReasons.map((x) => h('li', {}, x)))));
   }
   const hits = myAllergyHits(r);
@@ -334,7 +335,9 @@ async function pageRecipe(id) {
       moderationPanel(r)),
     h('div', {},
       notices,
-      h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, r.verified ? verifiedBadge() : null, h('a', { class: 'tag', href: browseHref({ category: r.category }), style: 'text-decoration:none' }, r.category), r.aiAssisted ? h('span', { class: 'tag ai-tag' }, '✨ Made with AI help') : null),
+      h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, r.verified ? verifiedBadge() : null, h('a', { class: 'tag', href: browseHref({ category: r.category }), style: 'text-decoration:none' }, r.category), r.aiAssisted ? h('span', { class: 'tag ai-tag' }, '✨ Made with AI help') : null,
+        r.visibility === 'private' ? h('span', { class: 'tag' }, '🔒 Private') : null,
+        r.visibility === 'unlisted' ? [h('span', { class: 'tag' }, '🔗 Unlisted'), h('button', { class: 'btn small', onclick: async () => { try { await navigator.clipboard.writeText(location.href); toast('Link copied'); } catch { toast(location.href); } } }, 'Copy link')] : null),
       h('h1', {}, r.title),
       h('a', { class: 'byline', href: `#/u/${r.author.username}` }, avatar(r.author, 'md'), h('div', {}, h('div', { style: 'display:flex;align-items:center;gap:6px;font-weight:800' }, r.author.displayName, userCheck(r.author)), h('div', { class: 'muted', style: 'font-size:.88rem' }, `@${r.author.username} · ${timeAgo(r.createdAt)}`))),
       r.description ? h('p', {}, r.description) : null,
@@ -355,7 +358,7 @@ async function pageRecipe(id) {
 function moderationPanel(r) {
   return h('div', { class: 'safety' },
     h('h3', {}, '🛡️ Checked by auto moderation'),
-    h('ul', { class: 'checks' }, (r.checks || []).map((c) => h('li', {}, c))),
+    h('ul', { class: 'checks' }, (r.checks || []).map((c) => (typeof c === 'string' ? h('li', {}, c) : h('li', { class: c.ok ? 'ok' : 'warn' }, c.text)))),
     r.safetyNotes.length ? [h('h3', { style: 'margin-top:12px' }, 'Safety notes'), h('ul', {}, r.safetyNotes.map((n) => h('li', {}, n)))] : null,
     h('div', { class: 'muted', style: 'font-size:.8rem;margin-top:8px' }, 'Jace Recipes checks every recipe for unsafe ingredients, allergens and bad language. It can miss things, so use your own judgment too.'));
 }
@@ -364,6 +367,7 @@ function ratingBox(r, mine) {
   const summary = h('div', { class: 'rating-summary' },
     r.ratingCount ? [h('span', { class: 'stars-inline big', 'aria-hidden': 'true' }, starText(r.rating)), h('strong', {}, ` ${r.rating}`), h('span', { class: 'muted' }, ` (${r.ratingCount} rating${r.ratingCount === 1 ? '' : 's'})`)]
       : h('span', { class: 'muted' }, 'No ratings yet'));
+  if (r.visibility === 'private') return null;
   if (!state.me || mine || r.status !== 'published') return h('div', { class: 'rating' }, summary);
   const stars = h('div', { class: 'star-input', role: 'radiogroup', 'aria-label': 'Your rating' });
   for (let n = 1; n <= 5; n++) {
@@ -384,6 +388,7 @@ function ratingBox(r, mine) {
 }
 
 function commentsBox(r) {
+  if (r.visibility === 'private') return null;
   const list = h('div', { class: 'comments' }, h('div', { class: 'muted' }, 'Loading comments…'));
   const title = h('h2', {}, 'Comments');
   const draw = (comments) => {
@@ -448,6 +453,10 @@ async function pageEditor(id, params = new URLSearchParams()) {
     steps: h('textarea', { placeholder: 'Mix the dry ingredients.\nAdd the egg and milk.\nCook until golden.' }, r.steps.join('\n')),
     verified: h('input', { type: 'checkbox', checked: r.verified }),
     autoFix: h('input', { type: 'checkbox', checked: true }),
+    visibility: h('select', {},
+      h('option', { value: 'public', selected: (r.visibility || 'public') === 'public' }, '🌎 Public: everyone can find it'),
+      h('option', { value: 'unlisted', selected: r.visibility === 'unlisted' }, '🔗 Unlisted: only people with the link'),
+      h('option', { value: 'private', selected: r.visibility === 'private' }, '🔒 Private: only you')),
   };
   const preview = h('div', { class: 'photo-preview' });
   const drawPreview = () => preview.replaceChildren(image ? h('img', { src: image, alt: '' }) : 'No photo');
@@ -457,7 +466,7 @@ async function pageEditor(id, params = new URLSearchParams()) {
 
   const onsubmit = async (e) => {
     e.preventDefault(); msg.replaceChildren(); saveBtn.disabled = true;
-    const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted: Boolean(fromAI), autoFix: f.autoFix.checked };
+    const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted: Boolean(fromAI), autoFix: f.autoFix.checked, visibility: f.visibility.value };
     if (canVerify()) body.verified = f.verified.checked;
     try {
       saveBtn.textContent = f.autoFix.checked ? 'Checking spelling…' : 'Saving…';
@@ -488,6 +497,8 @@ async function pageEditor(id, params = new URLSearchParams()) {
       h('div', { class: 'photo-pick' }, preview,
         h('button', { class: 'btn small', type: 'button', onclick: async () => { const d = await pickImage(1000, 0.8); if (d) { image = d; drawPreview(); } } }, 'Choose photo'),
         h('button', { class: 'btn small', type: 'button', onclick: () => { image = null; drawPreview(); } }, 'Remove')),
+      h('label', {}, 'Who can see it'), f.visibility,
+      h('div', { class: 'hint', style: 'margin-top:4px' }, 'Unlisted recipes don’t show in lists or search. Private recipes are only for you (Jace Recipes admins can still see them to keep the site safe).'),
       h('label', { class: 'check' }, f.autoFix, '✨ Fix my spelling and grammar automatically', h('span', { class: 'hint' }, ' (amounts never change)')),
       canVerify() ? h('label', { class: 'check' }, f.verified, verifiedBadge(), 'Post as a Jace Verified recipe') : null,
       msg,

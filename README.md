@@ -9,6 +9,7 @@ Recipes made by parents, for families. Part of [Jace](https://jaceo.vercel.app).
 - **Auto moderation** checks every recipe and name ([`lib/moderation.js`](lib/moderation.js)).
 - **Make a recipe with AI** using free OpenRouter models. The AI writes a draft the parent checks and edits; it's moderated before and after, and published recipes show a "Made with AI help" tag.
 - **Browse with filters:** Jace Verified or community, category, time, allergy-free (peanut, nuts, dairy, egg, wheat, soy, fish, shellfish, sesame), made with AI or not, sorted newest, quickest or A to Z, with "Load more". The home page has "View all" links for verified and community recipes.
+- **Public, unlisted or private recipes:** public ones show everywhere; unlisted ones only open with the link (with a Copy link button); private ones are only for the author (and the admin, for safety). Ratings and comments are off for private recipes.
 - **Ratings and comments:** 1 to 5 stars (not on your own recipe) and comments, both auto moderated. Comments with links or unkind words wait for @okjace. Browse can sort by top rated.
 - **Emails through Jace:** welcome, new comments on your recipe, recipe approved / Jace Verified / taken down, verifier added, and (for @okjace) things waiting for review. Sent by Jace's app email API (`POST /api/oauth/email`) in Jace's template with Jace Recipes' colors ([`lib/email.js`](lib/email.js)). Each kind can be turned off in Settings, and Jace lets people turn off all app emails. Needs Jace Recipes registered by the Jace site owner (an official app).
 - **Allergy warnings:** people save their family's allergies in Settings (private), including their own custom ones like "strawberries" or "mustard". Recipes containing them get a warning on the card and a big alert on the recipe page, and Browse has a "Hide my allergies" button.
@@ -89,7 +90,7 @@ runs the moderation tests and an end-to-end test that signs in through OAuth aga
 
 **Auto moderation.** Every recipe is checked when it's posted or edited:
 - **Blocked:** things that aren't food and aren't safe (bleach, antifreeze, detergent pods…), drugs, bad language, spam, and any term on Jace's own auto moderation list.
-- **Held for review** until @okjace approves: things that need a person to check (lye, raw milk, links…).
+- **Held for review** until @okjace approves (everyone's recipes and edits, @okjace's too; private recipes skip the queue since nobody else sees them): things that need a person to check (lye, raw milk, links…).
 - **Safety notes** added automatically: safe cooking temperatures, raw egg and raw flour, no honey under 12 months, choking hazards in Baby & Toddler recipes, alcohol, allergens and hot oil.
 
 **AI recipes** get the same treatment: the request is checked before it's sent to the AI, the AI is told the safety rules (food-safe temperatures, no honey for babies, no choking hazards, no alcohol in kids' food, food only), and its answer goes through auto moderation before the parent sees it, and again when it's published.

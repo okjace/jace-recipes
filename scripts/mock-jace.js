@@ -13,6 +13,7 @@ const ACCOUNTS = {
   okjace: { sub: 'u-okjace', username: 'okjace', display_name: 'Jace', picture: null, banned: false, muted: false },
   momchef: { sub: 'u-momchef', username: 'momchef', display_name: 'Mom Chef', picture: null, banned: false, muted: false },
   dadcooks: { sub: 'u-dadcooks', username: 'dadcooks', display_name: 'Dad Cooks', picture: null, banned: false, muted: false },
+  grandma: { sub: 'u-grandma', username: 'grandma', display_name: 'Grandma Jo', picture: null, banned: false, muted: false },
   mutedmom: { sub: 'u-mutedmom', username: 'mutedmom', display_name: 'Muted Mom', picture: null, banned: false, muted: true },
   bannedbob: { sub: 'u-bannedbob', username: 'bannedbob', display_name: 'Banned Bob', picture: null, banned: true, muted: false },
 };

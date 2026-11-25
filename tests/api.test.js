@@ -297,3 +297,43 @@ test('AI picks only free, current text models', async () => {
   ]);
   assert.deepEqual(picked, ['google/gemma-4-31b-it:free', 'nvidia/nemotron-3-ultra-550b-a55b:free']);
 });
+
+test('admin recipes and edits are moderated too', async () => {
+  const bad = await admin('POST', '/api/recipes', { title: 'Party Snack Mix', ingredients: '2 coconuts\n3 peanuts\npoison', steps: 'Mix everything together in a big bowl and serve at the party.' });
+  assert.equal(bad.status, 422);
+  const ok = (await admin('POST', '/api/recipes', { title: 'Party Snack Mix', ingredients: '2 cups pretzels\n1 cup raisins', steps: 'Mix everything together in a big bowl and serve at the party.' })).data.recipe;
+  assert.equal(ok.status, 'published');
+  const edited = await admin('PUT', `/api/recipes/${ok.id}`, { title: 'Etst', ingredients: '2 coconuts\n3 peanuts', steps: 'mix' });
+  assert.equal(edited.data.recipe.status, 'pending'); // vague edit goes to the queue, even for @okjace
+  assert.equal((await admin('PUT', `/api/recipes/${ok.id}`, { title: 'Etst', ingredients: '3 peanuts\npoison', steps: 'mix' })).status, 422);
+  const page = (await admin('GET', `/api/recipes/${ok.id}`)).data.recipe;
+  assert.ok(page.checks.some((c) => !c.ok));
+  assert.ok(page.safetyNotes.some((n) => /choking/i.test(n)));
+});
+
+test('private and unlisted recipes', async () => {
+  const gran = client((await signIn('grandma')).cookie);
+  const body = (title, visibility) => ({ title, visibility, ingredients: '1 cup oats\n1 cup milk', steps: 'Warm the milk, stir in the oats and cook for five minutes until creamy.' });
+  const priv = (await gran('POST', '/api/recipes', body('Secret Family Oatmeal', 'private'))).data.recipe;
+  const unl = (await gran('POST', '/api/recipes', body('Link Only Oatmeal', 'unlisted'))).data.recipe;
+  assert.equal(priv.visibility, 'private');
+  const anon = client(null);
+  assert.equal((await anon('GET', `/api/recipes/${priv.id}`)).status, 404);
+  assert.equal((await dad('GET', `/api/recipes/${priv.id}`)).status, 404);
+  assert.equal((await gran('GET', `/api/recipes/${priv.id}`)).status, 200);
+  assert.equal((await admin('GET', `/api/recipes/${priv.id}`)).status, 200);
+  assert.equal((await anon('GET', `/api/recipes/${unl.id}`)).status, 200); // with the link
+  const list = (await anon('GET', '/api/recipes?limit=48&q=Oatmeal')).data.recipes.map((r) => r.id);
+  assert.ok(!list.includes(priv.id) && !list.includes(unl.id));
+  const profileAnon = (await anon('GET', '/api/users/grandma')).data.recipes.map((r) => r.id);
+  assert.ok(!profileAnon.includes(priv.id) && !profileAnon.includes(unl.id));
+  const profileMine = (await gran('GET', '/api/users/grandma')).data.recipes.map((r) => r.id);
+  assert.ok(profileMine.includes(priv.id) && profileMine.includes(unl.id));
+  assert.equal((await dad('POST', `/api/recipes/${priv.id}/comments`, { body: 'hi there' })).status, 404);
+  assert.equal((await dad('PUT', `/api/recipes/${unl.id}/rating`, { stars: 5 })).status, 200);
+  // A vague private recipe isn't held for review: nobody else can see it.
+  const vague = (await gran('POST', '/api/recipes', { title: 'eat', visibility: 'private', ingredients: '2 nuts', steps: 'mix' })).data.recipe;
+  assert.equal(vague.status, 'published');
+  // Making it public later sends it to review.
+  assert.equal((await gran('PUT', `/api/recipes/${vague.id}`, { title: 'eat', visibility: 'public', ingredients: '2 nuts', steps: 'mix' })).data.recipe.status, 'pending');
+});
