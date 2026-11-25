@@ -66,6 +66,20 @@ createServer(async (req, res) => {
     return json(res, 200, { enabled: true, blocked_terms: ['mockbadword'], max_links: 2 });
   }
 
+  // A stand-in AI (OpenAI-style chat completions) for the AI recipe maker.
+  // Set MOCK_AI_URL=http://localhost:4000/v1 to use it.
+  if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
+    const body = JSON.parse(await readBody(req) || '{}');
+    const ask = String(body.messages?.at(-1)?.content || '').toLowerCase();
+    let answer;
+    if (ask.includes('trick')) answer = { title: 'Trick drink', description: 'Bad', category: 'Drinks', prepTime: 1, servings: 1, ingredients: ['1 cup bleach'], steps: ['Mix.'] };
+    else if (ask.includes('homework')) answer = { error: 'I can only help with recipes.' };
+    else answer = { title: 'Cheesy Chicken Rice Bake', description: 'A cozy one-dish dinner picky eaters love.', category: 'Dinner', prepTime: 45, servings: 4,
+      ingredients: ['1 lb chicken breast, diced', '1 cup rice', '2 cups chicken broth', '1 cup shredded cheddar', '1 cup frozen peas'],
+      steps: ['1. Heat the oven to 375°F (190°C).', '2. Mix rice, broth, chicken and peas in a baking dish.', '3. Cover and bake 35 minutes, until the chicken reaches 165°F inside.', '4. Top with cheese and bake 5 more minutes.'] };
+    return json(res, 200, { choices: [{ message: { role: 'assistant', content: '```json\n' + JSON.stringify(answer) + '\n```' } }] });
+  }
+
   if (url.pathname === '/') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end('<!doctype html><title>Mock Jace</title><body style="font-family:sans-serif;padding:40px;background:#111317;color:#e6e8eb"><h1 style="color:#3ddc84">Mock Jace is running</h1><p>This only pretends to be Jace for sign-in. Open the app instead: <a style="color:#3ddc84" href="http://localhost:3000">http://localhost:3000</a> (start it with <code>npm run dev</code>).</p></body>');

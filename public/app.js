@@ -33,6 +33,8 @@ function avatar(u, size = '') {
 }
 
 async function api(method, url, body) {
+  // Every write is sent as JSON (the server refuses anything else), even when there's nothing to send.
+  if (method !== 'GET' && body === undefined) body = {};
   const res = await fetch(url, {
     method, credentials: 'same-origin',
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
@@ -113,6 +115,7 @@ function renderNav() {
   nav.replaceChildren(themeButton());
   if (state.me) {
     nav.append(
+      state.ai ? h('a', { class: 'link hide-sm', href: '#/ai' }, '✨ AI') : null,
       h('a', { class: 'btn primary small', href: '#/new' }, '+ Add recipe'),
       isAdmin() ? h('a', { class: 'link hide-sm', href: '#/admin' }, 'Admin') : null,
       h('a', { class: 'me', href: `#/u/${state.me.username}`, title: 'Your profile' }, avatar(state.me), h('span', { class: 'name' }, state.me.displayName)),
@@ -130,6 +133,7 @@ function recipeCard(r) {
       h('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:center' },
         r.verified ? verifiedBadge() : null,
         h('span', { class: 'tag' }, r.category),
+        r.aiAssisted ? h('span', { class: 'tag ai-tag', title: 'Made with AI help' }, '✨ AI') : null,
         r.status !== 'published' ? h('span', { class: `status-pill ${r.status}` }, r.status === 'pending' ? 'In review' : 'Taken down') : null),
       h('h3', { class: 'card-title' }, r.title),
       r.description ? h('div', { class: 'muted', style: 'font-size:.92rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden' }, r.description) : null,
@@ -138,40 +142,152 @@ function recipeCard(r) {
 const grid = (list, emptyText) => list.length ? h('div', { class: 'grid' }, list.map(recipeCard)) : h('div', { class: 'empty' }, emptyText);
 
 // ------------------------------------------------------------ pages
-async function pageHome(params) {
-  const q = params.get('q') || '';
-  const category = params.get('category') || '';
-  const search = h('input', { type: 'search', placeholder: 'Search recipes, ingredients or parents…', value: q, 'aria-label': 'Search recipes' });
-  const submit = (e) => { e.preventDefault(); const p = new URLSearchParams(); if (search.value.trim()) p.set('q', search.value.trim()); if (category) p.set('category', category); go(`#/?${p}`); };
-  const chip = (name, label, extra = '') => h('button', {
-    class: `chip ${extra}${category === name ? ' on' : ''}`,
-    onclick: () => { const p = new URLSearchParams(); if (q) p.set('q', q); if (name) p.set('category', name); go(`#/?${p}`); },
-  }, label);
+const PREVIEW = 6; // recipes per section on the home page
+const ALLERGEN_LABELS = { peanut: 'Peanut-free', 'tree nuts': 'Tree-nut-free', milk: 'Dairy-free', eggs: 'Egg-free', wheat: 'Wheat-free', soy: 'Soy-free', fish: 'Fish-free', shellfish: 'Shellfish-free', sesame: 'Sesame-free' };
+const browseHref = (params) => `#/browse?${new URLSearchParams(params)}`;
 
+function searchForm(value = '') {
+  const search = h('input', { type: 'search', placeholder: 'Search recipes, ingredients or parents…', value, 'aria-label': 'Search recipes' });
+  return h('form', { class: 'search', onsubmit: (e) => { e.preventDefault(); go(browseHref(search.value.trim() ? { q: search.value.trim() } : {})); } },
+    search, h('button', { class: 'btn primary' }, 'Search'));
+}
+
+function sectionHead(title, href, label) {
+  return h('div', { class: 'section-head' }, h('h2', { class: 'section-title' }, title), href ? h('a', { class: 'view-all', href }, label || 'View all', ' →') : null);
+}
+
+async function pageHome() {
   app.replaceChildren(
     h('section', { class: 'hero' },
       h('h1', {}, 'Recipes from real parents'),
       h('p', { class: 'muted' }, 'Weeknight dinners, lunchbox ideas and baby food that families actually make. Look for the ', h('b', { style: 'color:var(--gold)' }, 'Jace Verified'), ' badge for tried-and-true picks.'),
-      h('form', { class: 'search', onsubmit: submit }, search, h('button', { class: 'btn primary' }, 'Search')),
-      h('div', { class: 'chips' }, chip('', 'All'), chip(VERIFIED, '✓ Jace Verified', 'verified-chip'), state.categories.map((c) => chip(c, `${EMOJI[c] || ''} ${c}`)))),
+      searchForm(),
+      h('div', { class: 'chips' },
+        h('a', { class: 'chip verified-chip', href: browseHref({ verified: 'only' }) }, '✓ Jace Verified'),
+        state.categories.map((c) => h('a', { class: 'chip', href: browseHref({ category: c }) }, `${EMOJI[c] || ''} ${c}`))),
+      state.me && state.ai ? h('a', { class: 'ai-cta', href: '#/ai' }, h('span', { class: 'ai-spark', 'aria-hidden': 'true' }, '✨'), h('span', {}, h('strong', {}, 'Make a recipe with AI'), h('span', { class: 'muted' }, ' Tell it what you have and who’s eating.'))) : null),
     h('div', { id: 'results' }, h('div', { class: 'empty' }, 'Loading recipes…')));
 
-  const p = new URLSearchParams(); if (q) p.set('q', q); if (category) p.set('category', category);
-  const { recipes } = await api('GET', `/api/recipes?${p}`);
+  const [verified, community] = await Promise.all([
+    api('GET', `/api/recipes?verified=only&limit=${PREVIEW}`),
+    api('GET', `/api/recipes?verified=none&limit=${PREVIEW}`),
+  ]);
   const results = document.getElementById('results');
-  const verified = recipes.filter((r) => r.verified);
-  const rest = recipes.filter((r) => !r.verified);
-
-  if (category === VERIFIED || q || category) {
-    results.replaceChildren(
-      h('h2', { class: 'section-title' }, category === VERIFIED ? [verifiedBadge(), ' recipes'] : (category || `Results for “${q}”`)),
-      grid(recipes, 'No recipes here yet. Be the first to add one!'));
-    return;
-  }
+  if (!results) return;
   results.replaceChildren(
-    ...(verified.length ? [h('h2', { class: 'section-title' }, verifiedBadge(), 'Jace Verified recipes'), grid(verified, '')] : []),
-    h('h2', { class: 'section-title' }, 'From the community'),
-    grid(rest, state.me ? 'No community recipes yet. Share your family favorite!' : 'No community recipes yet. Join and share your family favorite!'));
+    ...(verified.recipes.length ? [
+      sectionHead([verifiedBadge(), ' Jace Verified recipes'], verified.hasMore ? browseHref({ verified: 'only' }) : null, 'View all verified'),
+      grid(verified.recipes, '')] : []),
+    sectionHead('From the community', community.hasMore ? browseHref({ verified: 'none' }) : null, 'View all community'),
+    grid(community.recipes, state.me ? 'No community recipes yet. Share your family favorite!' : 'No community recipes yet. Sign in with Jace and share your family favorite!'),
+    h('div', { class: 'center' }, h('a', { class: 'btn', href: '#/browse' }, 'Browse all recipes with filters')));
+}
+
+// All recipes, with filters. Every filter lives in the URL so it can be shared and survives a refresh.
+async function pageBrowse(params) {
+  const p = Object.fromEntries(params);
+  const set = (key, value) => {
+    const next = { ...p };
+    if (value === '' || value == null || value === false) delete next[key]; else next[key] = value;
+    go(browseHref(next));
+  };
+  const select = (key, label, options) => h('label', { class: 'filter' }, h('span', {}, label),
+    h('select', { onchange: (e) => set(key, e.target.value) }, options.map(([v, text]) => h('option', { value: v, selected: (p[key] || '') === v }, text))));
+  const free = (p.free || '').split(',').filter(Boolean);
+  const toggleFree = (a) => set('free', (free.includes(a) ? free.filter((x) => x !== a) : [...free, a]).join(','));
+  const activeCount = ['category', 'verified', 'maxTime', 'ai', 'free', 'q'].filter((k) => p[k]).length;
+
+  let title = 'All recipes';
+  if (p.verified === 'only') title = 'Jace Verified recipes';
+  else if (p.verified === 'none') title = 'Community recipes';
+  if (p.category) title = `${p.category}${p.verified === 'only' ? ' · Jace Verified' : p.verified === 'none' ? ' · Community' : ''}`;
+  if (p.q) title = `Results for “${p.q}”`;
+
+  const results = h('div', { class: 'grid' });
+  const status = h('div', { class: 'empty' }, 'Loading recipes…');
+  const more = h('button', { class: 'btn hidden' }, 'Load more');
+  let offset = 0;
+  const load = async () => {
+    more.disabled = true;
+    const q = new URLSearchParams({ ...p, offset: String(offset), limit: '24' });
+    try {
+      const data = await api('GET', `/api/recipes?${q}`);
+      results.append(...data.recipes.map(recipeCard));
+      offset = data.nextOffset;
+      more.classList.toggle('hidden', !data.hasMore);
+      status.classList.toggle('hidden', results.children.length > 0);
+      status.textContent = 'No recipes match these filters. Try removing one.';
+    } catch (err) { status.replaceChildren(errorBox(err)); }
+    more.disabled = false;
+  };
+  more.onclick = load;
+
+  app.replaceChildren(
+    h('div', { style: 'padding-top:24px' },
+      h('a', { class: 'back', href: '#/' }, '← Home'),
+      h('h1', {}, p.verified === 'only' && !p.q ? [verifiedBadge(), ' ', title.replace('Jace Verified recipes', 'recipes')] : title),
+      searchForm(p.q || ''),
+      h('div', { class: 'filters' },
+        select('verified', 'Show', [['', 'All recipes'], ['only', 'Jace Verified only'], ['none', 'Community only']]),
+        select('category', 'Category', [['', 'Any category'], ...state.categories.map((c) => [c, c])]),
+        select('maxTime', 'Time', [['', 'Any time'], ['15', '15 min or less'], ['30', '30 min or less'], ['60', '1 hour or less']]),
+        select('sort', 'Sort', [['', 'Newest'], ['quick', 'Quickest'], ['az', 'A to Z']]),
+        select('ai', 'AI', [['', 'Any'], ['none', 'Not made with AI'], ['only', 'Made with AI help']])),
+      h('div', { class: 'chips allergen-chips', role: 'group', 'aria-label': 'Allergy filters' },
+        h('span', { class: 'muted', style: 'font-weight:700;align-self:center' }, 'Allergies:'),
+        state.allergens.map((a) => h('button', { class: `chip${free.includes(a) ? ' on' : ''}`, 'aria-pressed': String(free.includes(a)), onclick: () => toggleFree(a) }, ALLERGEN_LABELS[a] || `${a}-free`))),
+      h('p', { class: 'hint' }, 'Allergy filters use the ingredients list. Always read the ingredients yourself if someone has a serious allergy.'),
+      activeCount ? h('a', { class: 'btn small', href: '#/browse', style: 'margin-bottom:8px' }, 'Clear filters') : null),
+    results, status, h('div', { class: 'center', style: 'padding-bottom:40px' }, more));
+  await load();
+}
+
+// Make a recipe with AI. The AI writes a draft; the parent checks and edits it before publishing.
+async function pageAI() {
+  if (!state.me) return go('#/signin');
+  const prompt = h('textarea', { maxlength: 500, required: true, style: 'min-height:110px', placeholder: 'A quick dinner with chicken, rice and broccoli that my picky 5-year-old will eat' });
+  const category = h('select', {}, h('option', { value: '' }, 'Let the AI pick'), state.categories.map((c) => h('option', { value: c }, c)));
+  const out = h('div');
+  const go_ = h('button', { class: 'btn primary', type: 'submit' }, '✨ Make recipe');
+  const ideas = ['Lunchbox ideas with no nuts', 'Soft finger food for a 1-year-old', 'Healthy after-school snack in 10 minutes', 'Dinner with what’s left: eggs, cheese, spinach, tortillas'];
+
+  const submit = async (e) => {
+    e.preventDefault();
+    out.replaceChildren(h('div', { class: 'panel ai-loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Cooking up your recipe… this can take up to a minute.'));
+    go_.disabled = true;
+    try {
+      const { draft, left } = await api('POST', '/api/ai/recipe', { prompt: prompt.value, category: category.value });
+      state.aiDraft = draft;
+      out.replaceChildren(h('div', { class: 'panel ai-result' },
+        h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, h('span', { class: 'tag ai-tag' }, '✨ AI draft'), h('span', { class: 'tag' }, draft.category), draft.prepTime ? h('span', { class: 'tag' }, `⏱ ${draft.prepTime} min`) : null, h('span', { class: 'tag' }, `🍽 Serves ${draft.servings}`)),
+        h('h2', {}, draft.title),
+        draft.description ? h('p', {}, draft.description) : null,
+        draft.safetyNotes.length ? h('div', { class: 'safety' }, h('h3', {}, '🛡️ Safety notes'), h('ul', {}, draft.safetyNotes.map((n) => h('li', {}, n)))) : null,
+        draft.needsReview.length ? h('div', { class: 'notice warn' }, 'If you publish this, @okjace will check it first: ', draft.needsReview.join(' ')) : null,
+        h('h3', {}, 'Ingredients'), h('ul', {}, draft.ingredients.map((i) => h('li', {}, i))),
+        h('h3', {}, 'Steps'), h('ol', {}, draft.steps.map((s) => h('li', {}, s))),
+        h('p', { class: 'hint' }, 'AI can make mistakes. Read it over and change anything before you share it.'),
+        h('div', { class: 'actions' },
+          h('a', { class: 'btn primary', href: '#/new?from=ai' }, 'Edit & publish'),
+          h('button', { class: 'btn', type: 'button', onclick: submit }, 'Try again')),
+        h('p', { class: 'hint' }, `${left} AI recipe${left === 1 ? '' : 's'} left today.`)));
+    } catch (err) {
+      out.replaceChildren(errorBox(err));
+    } finally { go_.disabled = false; }
+  };
+
+  app.replaceChildren(h('div', { class: 'form-page' },
+    h('a', { class: 'back', href: '#/' }, '← Home'),
+    h('h1', {}, '✨ Make a recipe with AI'),
+    h('p', { class: 'muted' }, 'Say what you’d like to cook, what you have, and who’s eating. You’ll get a draft you can edit before you share it.'),
+    state.me.muted ? h('div', { class: 'notice warn' }, 'Your Jace account is muted, so you can’t use the AI right now.') : null,
+    h('form', { class: 'panel', onsubmit: submit },
+      h('label', {}, 'What should we make?'), prompt,
+      h('div', { class: 'chips', style: 'margin-top:10px' }, ideas.map((t) => h('button', { class: 'chip', type: 'button', onclick: () => { prompt.value = t; prompt.focus(); } }, t))),
+      h('label', {}, 'Category'), category,
+      h('div', { class: 'actions', style: 'margin-top:18px' }, go_),
+      h('p', { class: 'hint' }, 'Your request is sent to a free AI model on OpenRouter. Don’t include private information. Every AI recipe goes through Jace Recipes auto moderation.')),
+    out));
 }
 
 async function pageRecipe(id) {
@@ -194,7 +310,7 @@ async function pageRecipe(id) {
       r.safetyNotes.length ? h('div', { class: 'safety' }, h('h3', {}, '🛡️ Safety notes'), h('ul', {}, r.safetyNotes.map((n) => h('li', {}, n))), h('div', { class: 'muted', style: 'font-size:.8rem;margin-top:6px' }, 'Added automatically by Jace Recipes auto-moderation.')) : null),
     h('div', {},
       notices,
-      h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, r.verified ? verifiedBadge() : null, h('a', { class: 'tag', href: `#/?category=${encodeURIComponent(r.category)}`, style: 'text-decoration:none' }, r.category)),
+      h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px' }, r.verified ? verifiedBadge() : null, h('a', { class: 'tag', href: browseHref({ category: r.category }), style: 'text-decoration:none' }, r.category), r.aiAssisted ? h('span', { class: 'tag ai-tag' }, '✨ Made with AI help') : null),
       h('h1', {}, r.title),
       h('a', { class: 'byline', href: `#/u/${r.author.username}` }, avatar(r.author, 'md'), h('div', {}, h('div', { style: 'display:flex;align-items:center;gap:6px;font-weight:800' }, r.author.displayName, userCheck(r.author)), h('div', { class: 'muted', style: 'font-size:.88rem' }, `@${r.author.username} · ${timeAgo(r.createdAt)}`))),
       r.description ? h('p', {}, r.description) : null,
@@ -202,7 +318,10 @@ async function pageRecipe(id) {
       adminBar,
       (mine || isAdmin()) ? h('div', { class: 'actions' },
         r.status !== 'removed' || isAdmin() ? h('a', { class: 'btn small', href: `#/edit/${r.id}` }, 'Edit') : null,
-        h('button', { class: 'btn danger small', onclick: async () => { if (!confirm('Delete this recipe forever?')) return; await api('DELETE', `/api/recipes/${r.id}`); toast('Recipe deleted'); go('#/'); } }, 'Delete')) : null,
+        h('button', { class: 'btn danger small', onclick: async () => {
+          if (!confirm(`Delete “${r.title}” forever? This can’t be undone.`)) return;
+          try { await api('DELETE', `/api/recipes/${r.id}`); toast('Recipe deleted'); go(`#/u/${state.me.username}`); } catch (err) { toast(err.message); }
+        } }, 'Delete')) : null,
       h('div', { class: 'panel' }, h('h2', {}, 'Ingredients'), h('ul', { class: 'ingredients' }, r.ingredients.map((i) => h('li', {}, h('input', { type: 'checkbox', 'aria-label': `Got ${i}` }), h('span', {}, i))))),
       h('div', { class: 'panel' }, h('h2', {}, 'Steps'), h('ol', { class: 'steps' }, r.steps.map((s) => h('li', {}, h('span', {}, s))))))));
 }
@@ -215,9 +334,11 @@ async function takedown(id) {
   route();
 }
 
-async function pageEditor(id) {
+async function pageEditor(id, params = new URLSearchParams()) {
   if (!state.me) return go('#/signin');
   let r = { title: '', description: '', category: state.categories[0], prepTime: '', servings: 4, ingredients: [], steps: [], image: null, verified: false };
+  const fromAI = !id && params.get('from') === 'ai' && state.aiDraft;
+  if (fromAI) r = { ...r, ...state.aiDraft };
   if (id) r = (await api('GET', `/api/recipes/${encodeURIComponent(id)}`)).recipe;
   let image = r.image;
   const f = {
@@ -238,17 +359,20 @@ async function pageEditor(id) {
 
   const onsubmit = async (e) => {
     e.preventDefault(); msg.replaceChildren(); saveBtn.disabled = true;
-    const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image };
+    const body = { title: f.title.value, description: f.description.value, category: f.category.value, prepTime: f.prepTime.value, servings: f.servings.value, ingredients: f.ingredients.value, steps: f.steps.value, image, aiAssisted: Boolean(fromAI) };
     if (canVerify()) body.verified = f.verified.checked;
     try {
       const { recipe } = await api(id ? 'PUT' : 'POST', id ? `/api/recipes/${id}` : '/api/recipes', body);
+      if (fromAI) state.aiDraft = null;
       toast(recipe.status === 'pending' ? 'Sent to review before it goes public' : 'Recipe published!');
       go(`#/r/${recipe.id}`);
     } catch (err) { msg.replaceChildren(errorBox(err)); msg.scrollIntoView({ behavior: 'smooth', block: 'center' }); } finally { saveBtn.disabled = false; }
   };
 
   app.replaceChildren(h('div', { class: 'form-page' },
-    h('h1', {}, id ? 'Edit recipe' : 'Share a recipe'),
+    h('h1', {}, id ? 'Edit recipe' : fromAI ? 'Check your AI recipe' : 'Share a recipe'),
+    fromAI ? h('div', { class: 'notice warn' }, '✨ This recipe was written by AI. Read every line and fix anything that’s wrong before you publish. It will show a “Made with AI help” tag.') : null,
+    !id && !fromAI && state.ai ? h('p', {}, h('a', { href: '#/ai' }, '✨ Or let AI write a first draft for you')) : null,
     h('p', { class: 'muted' }, 'Every recipe is checked by auto-moderation to keep Jace Recipes safe for families.'),
     state.me.muted ? h('div', { class: 'notice warn' }, 'Your Jace account is muted, so you can’t post or edit recipes right now.') : null,
     h('form', { class: 'panel', onsubmit },
@@ -399,8 +523,10 @@ async function route() {
   try {
     switch (parts[0]) {
       case undefined: await pageHome(params); break;
+      case 'browse': await pageBrowse(params); break;
+      case 'ai': await pageAI(); break;
       case 'r': await pageRecipe(parts[1]); break;
-      case 'new': await pageEditor(); break;
+      case 'new': await pageEditor(undefined, params); break;
       case 'edit': await pageEditor(parts[1]); break;
       case 'u': await pageProfile(parts[1]); break;
       case 'settings': await pageSettings(); break;
@@ -416,7 +542,7 @@ async function route() {
 
 (async function start() {
   const [meta, me] = await Promise.all([api('GET', '/api/meta'), api('GET', '/api/me')]);
-  state.categories = meta.categories; state.admin = meta.admin; state.me = me.user;
+  state.categories = meta.categories; state.admin = meta.admin; state.me = me.user; state.ai = meta.ai; state.allergens = meta.allergens || [];
   renderNav();
   window.addEventListener('hashchange', route);
   route();

@@ -21,7 +21,7 @@ async function waitFor(url) {
 }
 
 before(async () => {
-  const env = { ...process.env, JACE_URL: JACE, JACE_CLIENT_ID: 'test', JACE_CLIENT_SECRET: 'test', SESSION_SECRET: 'x'.repeat(40), PGLITE_DIR: path.join(dir, 'db'), APP_URL: APP, DATABASE_URL: '' };
+  const env = { ...process.env, JACE_URL: JACE, JACE_CLIENT_ID: 'test', JACE_CLIENT_SECRET: 'test', SESSION_SECRET: 'x'.repeat(40), PGLITE_DIR: path.join(dir, 'db'), APP_URL: APP, DATABASE_URL: '', MOCK_AI_URL: `${JACE}/v1`, OPENROUTER_API_KEY: '' };
   procs.push(spawn(process.execPath, ['scripts/mock-jace.js'], { env: { ...env, PORT: '4917' }, stdio: 'ignore' }));
   procs.push(spawn(process.execPath, ['server.js'], { env: { ...env, PORT: '3917' }, stdio: 'inherit' }));
   await waitFor(`${JACE}/x`);
@@ -140,4 +140,54 @@ test('muted Jace accounts cannot post', async () => {
 test('writes need JSON (blocks cross-site form posts)', async () => {
   const res = await fetch(`${APP}/api/recipes`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'title=x' });
   assert.equal(res.status, 415);
+});
+
+test('authors can delete their own recipes, others cannot', async () => {
+  const made = await mom('POST', '/api/recipes', { title: 'Delete me', ingredients: 'rice', steps: 'cook' });
+  const id = made.data.recipe.id;
+  assert.equal((await dad('DELETE', `/api/recipes/${id}`, {})).status, 403);
+  assert.equal((await mom('DELETE', `/api/recipes/${id}`, {})).status, 200);
+  assert.equal((await mom('GET', `/api/recipes/${id}`)).status, 404);
+});
+
+test('filters, sorting and load more', async () => {
+  const anon = client(null);
+  for (let i = 0; i < 3; i++) await dad('POST', '/api/recipes', { title: `Milk toast ${i}`, ingredients: '1 cup milk\nbread', steps: 'toast', prepTime: 5 + i });
+  const community = await anon('GET', '/api/recipes?verified=none');
+  assert.ok(community.data.recipes.length > 0 && community.data.recipes.every((r) => !r.verified));
+  const verified = await anon('GET', '/api/recipes?verified=only');
+  assert.ok(verified.data.recipes.every((r) => r.verified));
+  const dairyFree = await anon('GET', '/api/recipes?free=milk');
+  assert.ok(dairyFree.data.recipes.length > 0);
+  assert.ok(dairyFree.data.recipes.every((r) => !r.allergens.includes('milk')));
+  const quick = await anon('GET', '/api/recipes?maxTime=6&verified=none');
+  assert.ok(quick.data.recipes.every((r) => r.prepTime > 0 && r.prepTime <= 6));
+  const page1 = await anon('GET', '/api/recipes?limit=2');
+  assert.equal(page1.data.recipes.length, 2);
+  assert.equal(page1.data.hasMore, true);
+  const page2 = await anon('GET', `/api/recipes?limit=2&offset=${page1.data.nextOffset}`);
+  assert.notEqual(page2.data.recipes[0].id, page1.data.recipes[0].id);
+  const az = await anon('GET', '/api/recipes?sort=az&verified=none');
+  const titles = az.data.recipes.map((r) => r.title.toLowerCase());
+  assert.deepEqual(titles, [...titles].sort());
+});
+
+test('AI recipe maker makes a moderated draft', async () => {
+  const ok = await mom('POST', '/api/ai/recipe', { prompt: 'chicken and rice dinner' });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.data.draft.title, 'Cheesy Chicken Rice Bake');
+  assert.ok(ok.data.draft.steps.every((s) => !/^\d/.test(s))); // numbering removed
+  assert.ok(ok.data.draft.safetyNotes.some((n) => /165°F/.test(n)));
+  // The AI's answer is checked too.
+  const bad = await mom('POST', '/api/ai/recipe', { prompt: 'a trick drink' });
+  assert.equal(bad.status, 422);
+  // Off-topic asks get the AI's refusal.
+  assert.equal((await mom('POST', '/api/ai/recipe', { prompt: 'do my homework' })).status, 422);
+  // Unsafe asks never reach the AI.
+  assert.equal((await mom('POST', '/api/ai/recipe', { prompt: 'cookies with bleach' })).status, 422);
+  assert.equal((await client(null)('POST', '/api/ai/recipe', { prompt: 'soup' })).status, 401);
+  const pub = await mom('POST', '/api/recipes', { ...ok.data.draft, ingredients: ok.data.draft.ingredients.join('\n'), steps: ok.data.draft.steps.join('\n'), aiAssisted: true });
+  assert.equal(pub.data.recipe.aiAssisted, true);
+  const aiOnly = await client(null)('GET', '/api/recipes?ai=only');
+  assert.ok(aiOnly.data.recipes.length >= 1 && aiOnly.data.recipes.every((r) => r.aiAssisted));
 });

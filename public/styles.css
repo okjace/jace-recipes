@@ -209,3 +209,30 @@ footer.site a { color: var(--muted); }
   .jace-btn.small { padding: 6px 8px; font-size: 0; gap: 0; }
   .jace-btn.small img { width: 22px; height: 22px; }
 }
+
+/* Home sections, browse filters */
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.section-head .section-title { margin-bottom: 12px; }
+.view-all { font-weight: 700; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.view-all:hover { text-decoration: underline; }
+.center { display: flex; justify-content: center; margin: 8px 0 32px; }
+.back { display: inline-block; color: var(--muted); text-decoration: none; font-weight: 600; margin-bottom: 10px; }
+.back:hover { color: var(--text); }
+a.chip { text-decoration: none; display: inline-flex; align-items: center; }
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 4px 0 12px; }
+.filter { margin: 0; display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
+.filter select { padding: 9px 11px; font-size: .95rem; }
+.allergen-chips { flex-wrap: wrap; overflow: visible; }
+.hint { color: var(--muted); font-size: .88rem; }
+
+/* AI */
+.ai-tag { background: var(--accent-soft); color: var(--gold); }
+.ai-cta { display: flex; gap: 12px; align-items: center; margin-top: 16px; padding: 14px 16px; border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); background: var(--accent-soft); text-decoration: none; }
+.ai-cta:hover { border-color: var(--accent); }
+.ai-spark { font-size: 1.5rem; }
+.ai-loading { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+.ai-result { margin-top: 16px; }
+.ai-result ul, .ai-result ol { padding-left: 22px; }
+.spinner { width: 20px; height: 20px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }

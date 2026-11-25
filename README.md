@@ -7,6 +7,8 @@ Recipes made by parents, for families. Part of [Jace](https://jaceo.vercel.app).
 - **Jace Verified recipes** get a badge, their own category, and always show first.
 - **@okjace** can verify and un-verify recipes, choose who can post verified recipes, take recipes down (and restore them), approve held recipes, and suspend accounts.
 - **Auto moderation** checks every recipe and name ([`lib/moderation.js`](lib/moderation.js)).
+- **Make a recipe with AI** using free OpenRouter models. The AI writes a draft the parent checks and edits; it's moderated before and after, and published recipes show a "Made with AI help" tag.
+- **Browse with filters:** Jace Verified or community, category, time, allergy-free (peanut, nuts, dairy, egg, wheat, soy, fish, shellfish, sesame), made with AI or not, sorted newest, quickest or A to Z, with "Load more". The home page has "View all" links for verified and community recipes.
 - Jace colors with **light and dark mode** (follows the device, or pick with the sun/moon button).
 
 Plain Node.js with no framework: static files in [`public/`](public), one Vercel function in [`api/index.js`](api/index.js), and the API in [`lib/app.js`](lib/app.js). Data lives in Neon Postgres.
@@ -28,6 +30,8 @@ JACE_CLIENT_ID=local-dev
 JACE_CLIENT_SECRET=local-dev
 SESSION_SECRET=<openssl rand -base64 32>
 ```
+
+For the AI recipe maker without a key, also add `MOCK_AI_URL=http://localhost:4000/v1` (the mock answers with a sample recipe).
 
 Then, in two terminals:
 
@@ -55,6 +59,9 @@ runs the moderation tests and an end-to-end test that signs in through OAuth aga
 | `JACE_CLIENT_SECRET` | yes | OAuth client secret from Jace. Server only. |
 | `SESSION_SECRET` | yes | 32+ random characters that encrypt the sign-in cookie. Changing it signs everyone out. |
 | `DATABASE_URL` | yes in production | Neon Postgres connection string. Vercel → Storage → Neon sets it. |
+| `OPENROUTER_API_KEY` | for AI | Free key from [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys). Without it, the AI recipe maker is hidden. Only models ending in `:free` are ever used. |
+| `OPENROUTER_MODEL` | no | Comma-separated `:free` model ids to try in order. Defaults to gpt-oss-120b, Llama 3.3 70B and Gemma 3 27B. |
+| `AI_DAILY_LIMIT` | no | AI recipes per person per day (default 20). Failed tries don't count. |
 | `APP_URL` | no | Public URL, used for the redirect URI `<APP_URL>/api/auth/callback`. Defaults to the request's host. |
 | `JACE_URL` | no | Defaults to `https://jaceo.vercel.app`. |
 | `ADMIN_USERNAME` | no | The Jace username that runs the site. Defaults to `okjace`. |
@@ -78,6 +85,8 @@ runs the moderation tests and an end-to-end test that signs in through OAuth aga
 - **Blocked:** things that aren't food and aren't safe (bleach, antifreeze, detergent pods…), drugs, bad language, spam, and any term on Jace's own auto moderation list.
 - **Held for review** until @okjace approves: things that need a person to check (lye, raw milk, links…).
 - **Safety notes** added automatically: safe cooking temperatures, raw egg and raw flour, no honey under 12 months, choking hazards in Baby & Toddler recipes, alcohol, allergens and hot oil.
+
+**AI recipes** get the same treatment: the request is checked before it's sent to the AI, the AI is told the safety rules (food-safe temperatures, no honey for babies, no choking hazards, no alcohol in kids' food, food only), and its answer goes through auto moderation before the parent sees it, and again when it's published.
 
 Add words to the lists at the top of `lib/moderation.js` to tune it.
 
